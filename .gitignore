@@ -1,0 +1,14 @@
+.oiaf/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.env
+vendor/
+bin/
+dist/
+tmp/
+.DS_Store
+*.log

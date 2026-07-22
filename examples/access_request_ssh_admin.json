@@ -1,0 +1,27 @@
+{
+  "identity": {
+    "username": "admin-user",
+    "groups": ["Admins"],
+    "type": "person"
+  },
+  "resource": {
+    "type": "ssh",
+    "name": "prod-server-01",
+    "sensitivity": "high"
+  },
+  "protocol": {
+    "name": "ssh"
+  },
+  "source": {
+    "ip": "203.0.113.10",
+    "geo": "NL"
+  },
+  "device": {
+    "managed": true,
+    "compliant": true
+  },
+  "context": {
+    "mfa_recent": false,
+    "interactive": true
+  }
+}

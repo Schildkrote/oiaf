@@ -1,0 +1,14 @@
+{
+  "id": "require-mfa-radius-vpn",
+  "description": "Require MFA for RADIUS VPN access",
+  "enabled": true,
+  "priority": 90,
+  "effect": "challenge",
+  "conditions": {
+    "all": [
+      {"path": "resource.type", "op": "eq", "value": "vpn"},
+      {"path": "protocol.name", "op": "eq", "value": "radius"}
+    ]
+  },
+  "challenge": {"methods": ["totp", "push"]}
+}

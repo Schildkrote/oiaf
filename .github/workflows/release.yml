@@ -1,0 +1,32 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Build binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o dist/oiafd-linux-amd64 ./core/cmd/oiafd
+          GOOS=linux GOARCH=arm64 go build -o dist/oiafd-linux-arm64 ./core/cmd/oiafd
+          GOOS=darwin GOARCH=amd64 go build -o dist/oiafd-darwin-amd64 ./core/cmd/oiafd
+          GOOS=darwin GOARCH=arm64 go build -o dist/oiafd-darwin-arm64 ./core/cmd/oiafd
+          GOOS=linux GOARCH=amd64 go build -o dist/oiafctl-linux-amd64 ./cli/oiafctl
+          GOOS=linux GOARCH=arm64 go build -o dist/oiafctl-linux-arm64 ./cli/oiafctl
+          GOOS=darwin GOARCH=amd64 go build -o dist/oiafctl-darwin-amd64 ./cli/oiafctl
+          GOOS=darwin GOARCH=arm64 go build -o dist/oiafctl-darwin-arm64 ./cli/oiafctl
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

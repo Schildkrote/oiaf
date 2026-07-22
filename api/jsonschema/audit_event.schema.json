@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Schildkrote/oiaf/api/jsonschema/audit_event.schema.json",
+  "title": "AuditEvent",
+  "description": "A tamper-evident, hash-chained audit event.",
+  "type": "object",
+  "required": ["id", "timestamp", "type", "actor", "target", "previous_hash", "hash"],
+  "properties": {
+    "id": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "type": {
+      "type": "string",
+      "description": "Event type, e.g. access.evaluate, challenge.created, challenge.verified, challenge.failed"
+    },
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["user", "adapter", "admin", "system"]
+        },
+        "id": { "type": "string" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["identity", "resource", "policy", "challenge", "adapter"]
+        },
+        "id": { "type": "string" }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "challenge", "alert"]
+    },
+    "risk_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "previous_hash": { "type": "string" },
+    "hash": { "type": "string" }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "alert-ntlm-admin",
+  "description": "Alert on NTLM authentication by admin accounts",
+  "enabled": true,
+  "priority": 80,
+  "effect": "alert",
+  "conditions": {
+    "all": [
+      {"path": "protocol.name", "op": "eq", "value": "ntlm"},
+      {"path": "identity.groups", "op": "contains", "value": "Admins"}
+    ]
+  }
+}

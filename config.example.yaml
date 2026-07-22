@@ -1,0 +1,25 @@
+server:
+  addr: 127.0.0.1:8080
+  log_level: info
+  log_format: json
+  ui_enabled: true
+  metrics_enabled: true
+
+storage:
+  driver: memory
+
+security:
+  challenge_ttl_seconds: 300
+  totp_max_attempts: 5
+  push_timestamp_skew_seconds: 60
+  require_secure_cookies: true
+
+policy:
+  default_effect: deny
+
+risk:
+  thresholds:
+    low: 24
+    elevated: 49
+    high: 74
+    very_high: 89

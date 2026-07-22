@@ -1,0 +1,14 @@
+{
+  "id": "require-mfa-admin-ssh",
+  "description": "Require MFA for SSH access by admins",
+  "enabled": true,
+  "priority": 100,
+  "effect": "challenge",
+  "conditions": {
+    "all": [
+      {"path": "resource.type", "op": "eq", "value": "ssh"},
+      {"path": "identity.groups", "op": "contains", "value": "Admins"}
+    ]
+  },
+  "challenge": {"methods": ["totp", "push"]}
+}

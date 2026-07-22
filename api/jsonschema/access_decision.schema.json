@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Schildkrote/oiaf/api/jsonschema/access_decision.schema.json",
+  "title": "AccessDecision",
+  "description": "The result of evaluating an AccessRequest against policy and risk.",
+  "type": "object",
+  "required": ["request_id", "decision", "risk_score", "reasons"],
+  "properties": {
+    "request_id": { "type": "string", "format": "uuid" },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "challenge", "alert"]
+    },
+    "risk_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "challenge": {
+      "type": "object",
+      "required": ["id", "methods", "expires_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["totp", "push", "webauthn", "email", "sms"]
+          },
+          "minItems": 1
+        },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

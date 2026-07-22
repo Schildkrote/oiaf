@@ -1,0 +1,44 @@
+site_name: OIAF Documentation
+site_description: Open Identity Access Firewall
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Control Plane: architecture/control-plane.md
+    - Adapters: architecture/adapters.md
+    - Policy Engine: architecture/policy-engine.md
+    - Risk Engine: architecture/risk-engine.md
+    - MFA Orchestration: architecture/mfa-orchestration.md
+  - Security:
+    - Threat Model: security/threat-model.md
+    - Secure Defaults: security/secure-defaults.md
+    - Credential Handling: security/credential-handling.md
+    - MFA Security: security/mfa-security.md
+    - Audit Logging: security/audit-logging.md
+  - Adapters:
+    - RADIUS: adapters/radius.md
+    - LDAP Proxy: adapters/ldap-proxy.md
+    - PAM: adapters/pam.md
+    - Windows Credential Provider: adapters/windows-credential-provider.md
+    - AD Monitor: adapters/ad-monitor.md
+    - Okta: adapters/okta.md
+    - Entra ID: adapters/entra-id.md
+    - Duo: adapters/duo.md
+  - Deployment:
+    - Quickstart: deployment/quickstart.md
+    - Production: deployment/production.md
+    - Air-Gapped: deployment/air-gapped.md
+  - Operations:
+    - Backup & Restore: operations/backup-restore.md
+    - Monitoring: operations/monitoring.md
+    - Disaster Recovery: operations/disaster-recovery.md
+  - Policies:
+    - Policy as Code: policies/policy-as-code.md
+    - Examples: policies/examples.md
+  - Contributing:
+    - Getting Started: contributing/getting-started.md
+    - Development: contributing/development.md
+    - RFC Process: contributing/rfc-process.md
