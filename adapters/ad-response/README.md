@@ -2,51 +2,74 @@
 
 ## Purpose
 
-The AD response adapter is the active counterpart to the AD monitor adapter.
-Given an OIAF decision or detected risk signal, it takes response actions in
-Active Directory: disabling or locking accounts, forcing password resets,
-revoking Kerberos tickets, removing group membership, or triggering step-up
-re-authentication.
+The AD response adapter is the active enforcement counterpart to the DC agent.
+It consumes OIAF deny/challenge decisions via webhook and performs privileged
+LDAP actions in Active Directory: disabling accounts, forcing password resets,
+removing group memberships, and revoking Kerberos tickets.
 
 ## Status
 
-Planned (M4). Documentation only.
+Implemented (M4c). Dry-run by default.
 
 ## Architecture
 
 ```
-OIAF core --decision/webhook--> oiaf-ad-response --LDAP/Kerberos--> Active Directory
+OIAF core --webhook--> oiaf-ad-response --LDAPS--> Active Directory
 ```
 
-- Consumes OIAF decisions or risk-triggered webhooks.
-- Performs privileged directory writes (disable account, reset password, remove
-  from group, invalidate tickets via `klist`/`ktpass` or LDAP controls).
-- Records every response action in the OIAF audit log for accountability.
+## Supported Actions
+
+| Action | LDAP Operation |
+|--------|---------------|
+| `disable_account` | Set `userAccountControl \|= 0x0002` |
+| `enable_account` | Clear `userAccountControl & ~0x0002` |
+| `force_password_reset` | Set `pwdLastSet = 0` |
+| `remove_from_group` | Remove `member` from group DN |
 
 ## Configuration
 
-| Env / Flag          | Description                        | Default        |
-|---------------------|------------------------------------|----------------|
-| `OIAF_SERVER`       | OIAF core base URL                 | `http://127.0.0.1:8080` |
-| `OIAF_ADAPTER_TOKEN`| Adapter bearer token               | required       |
-| `AD_LDAP_URL`       | Domain controller LDAPS URL        | required       |
-| `AD_BIND_DN`        | Service account bind DN            | required       |
-| `AD_BIND_PASSWORD`  | Service account password (secret)  | required       |
-| `AD_DRY_RUN`        | Log actions without applying       | `true`         |
+| Env / Flag | Description | Default |
+|------------|-------------|---------|
+| `AD_RESPONSE_LISTEN` | Webhook listen address | `:9090` |
+| `OIAF_SERVER` | OIAF core base URL | `http://127.0.0.1:8080` |
+| `OIAF_ADAPTER_TOKEN` | Adapter bearer token | required |
+| `AD_LDAP_URL` | Domain controller LDAPS URL | required |
+| `AD_BIND_DN` | Service account bind DN | required |
+| `AD_BIND_PASSWORD` | Service account password | required |
+| `AD_DRY_RUN` | Log actions without applying | `true` |
 
-## Security considerations
+## Webhook Format
 
-- This adapter holds highly privileged AD credentials — protect and rotate them.
-- Default to dry-run; require explicit enablement for destructive actions.
-- Every response action must be audited and reversible where possible.
+```json
+POST /webhook/oiaf-decision
+{
+  "request_id": "...",
+  "account_name": "svc-compromised",
+  "account_sid": "S-1-5-21-...",
+  "decision": "deny",
+  "risk_score": 100,
+  "reasons": ["service_account_baseline_deviation"],
+  "action": "disable_account"
+}
+```
+
+## Security Considerations
+
+- This adapter holds highly privileged AD credentials. Protect and rotate them.
+- Default to dry-run (`AD_DRY_RUN=true`); require explicit enablement for
+  destructive actions.
+- Every response action is logged before execution.
+- Use LDAPS only; never transmit bind credentials in cleartext.
 - Require human approval (OIAF challenge) for high-impact actions like
   disabling privileged accounts.
-- Use LDAPS only; never transmit bind credentials in cleartext.
 
 ## Roadmap
 
-- [ ] Webhook consumer for OIAF decisions
-- [ ] Account disable / enable actions
-- [ ] Forced password reset and group removal
-- [ ] Kerberos ticket revocation
-- [ ] Dry-run mode and approval gating
+- [x] Webhook consumer for OIAF decisions
+- [x] Account disable / enable actions
+- [x] Forced password reset
+- [x] Group membership removal
+- [x] Dry-run mode
+- [ ] Kerberos ticket revocation (klist purge on DC)
+- [ ] Approval gating for privileged accounts
+- [ ] Action rollback support

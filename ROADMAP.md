@@ -29,11 +29,14 @@ This roadmap is directional and may change as the project evolves.
 - RADIUS adapter
 - LDAP adapter
 
-## M4 — Windows and AD
+## M4 — DC Agent and Service Account Discovery
 
-- Windows authentication integration
-- Active Directory support
-- Group-level policy mapping
+- DC agent Windows Service (EvtSubscribe real-time auth monitoring on DCs)
+- AD inventory scanner (LDAP enumeration, privileged group mapping, SPN discovery)
+- Service account behavioural discovery engine (digital fencing)
+- Baseline deviation detection and policy enforcement
+- AD response adapter (account disable, ticket revocation, group removal)
+- WFP enforcement driver (separate repo, kernel-mode network filtering)
 
 ## M5 — Cloud Identity
 

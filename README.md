@@ -65,11 +65,15 @@ make dev
 - Audit logging with hash chain
 - Adapter SDK with reference skeletons
 
-## Non-Goals
+## DC-Side Monitoring Scope
 
-- No domain controller hooking
-- No LSASS injection
-- No kernel credential interception
+- Authentication monitoring on DCs via official Windows APIs
+  (EvtSubscribe / ETW); no WEF/WEC infrastructure required
+- No LSASS injection, no kernel credential interception,
+  no modification of SAM or Kerberos/NTLM protocol implementations
+- Inline enforcement via AD response actions (LDAPS) and
+  WFP network filtering; no LSASS-resident code
+- No agents required on application servers
 
 ## Security
 

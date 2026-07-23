@@ -158,11 +158,15 @@ type AccessRequest struct {
 }
 
 type AccessIdentity struct {
-	Username   string   `json:"username"`
-	Groups     []string `json:"groups,omitempty"`
-	Type       string   `json:"type"`
-	Privileged bool     `json:"privileged,omitempty"`
-	UsualGeo   string   `json:"usual_geo,omitempty"`
+	Username             string   `json:"username"`
+	Groups               []string `json:"groups,omitempty"`
+	Type                 string   `json:"type"`
+	Privileged           bool     `json:"privileged,omitempty"`
+	UsualGeo             string   `json:"usual_geo,omitempty"`
+	LastLogonDays        int      `json:"last_logon_days,omitempty"`
+	PasswordNeverExpires bool     `json:"password_never_expires,omitempty"`
+	HasSPN               bool     `json:"has_spn,omitempty"`
+	IsGMSA               bool     `json:"is_gmsa,omitempty"`
 }
 
 type AccessResource struct {
@@ -187,8 +191,9 @@ type AccessDevice struct {
 }
 
 type AccessContext struct {
-	MFARecent   bool `json:"mfa_recent"`
-	Interactive bool `json:"interactive"`
+	MFARecent         bool `json:"mfa_recent"`
+	Interactive       bool `json:"interactive"`
+	BaselineDeviation bool `json:"baseline_deviation"`
 }
 
 type AccessDecision struct {
@@ -278,4 +283,103 @@ type PolicyDecision struct {
 
 func NewID() string {
 	return uuid.New().String()
+}
+
+type ADAuthEvent struct {
+	EventID       int       `json:"event_id"`
+	Timestamp     time.Time `json:"timestamp"`
+	AccountName   string    `json:"account_name"`
+	AccountDomain string    `json:"account_domain"`
+	AccountSID    string    `json:"account_sid"`
+	LogonType     int       `json:"logon_type"`
+	LogonProcess  string    `json:"logon_process"`
+	AuthPackage   string    `json:"auth_package"`
+	SourceIP      string    `json:"source_ip"`
+	SourcePort    int       `json:"source_port"`
+	TargetServer  string    `json:"target_server"`
+	TargetSPN     string    `json:"target_spn"`
+	Status        string    `json:"status"`
+	SubStatus     string    `json:"sub_status"`
+	DCName        string    `json:"dc_name"`
+	EventType     string    `json:"event_type"`
+}
+
+type ADAuthEventBatch struct {
+	Events []ADAuthEvent `json:"events"`
+}
+
+type ADEventDecision struct {
+	AccountSID  string   `json:"account_sid"`
+	AccountName string   `json:"account_name"`
+	Decision    Decision `json:"decision"`
+	RiskScore   int      `json:"risk_score"`
+	Reasons     []string `json:"reasons"`
+}
+
+type ADAuthEventBatchResponse struct {
+	Accepted  int               `json:"accepted"`
+	Decisions []ADEventDecision `json:"decisions"`
+}
+
+type ADInventoryRecord struct {
+	SID                string    `json:"sid"`
+	SamAccountName     string    `json:"sam_account_name"`
+	DisplayName        string    `json:"display_name"`
+	ObjectClass        string    `json:"object_class"`
+	UserAccountControl int       `json:"user_account_control"`
+	SPNs               []string  `json:"spns,omitempty"`
+	MemberOf           []string  `json:"member_of,omitempty"`
+	LastLogonTimestamp time.Time `json:"last_logon_timestamp"`
+	PwdLastSet         time.Time `json:"pwd_last_set"`
+	Enabled            bool      `json:"enabled"`
+	OU                 string    `json:"ou"`
+	IsGMSA             bool      `json:"is_gmsa"`
+	IsPrivileged       bool      `json:"is_privileged"`
+}
+
+type ADInventorySummary struct {
+	TotalAccounts      int       `json:"total_accounts"`
+	UserAccounts       int       `json:"user_accounts"`
+	ComputerAccounts   int       `json:"computer_accounts"`
+	ServiceAccounts    int       `json:"service_accounts"`
+	PrivilegedAccounts int       `json:"privileged_accounts"`
+	StaleAccounts      int       `json:"stale_accounts"`
+	DisabledAccounts   int       `json:"disabled_accounts"`
+	ScannedAt          time.Time `json:"scanned_at"`
+}
+
+type TimeWindow struct {
+	StartMinuteOfDay int   `json:"start_minute_of_day"`
+	EndMinuteOfDay   int   `json:"end_minute_of_day"`
+	DaysOfWeek       []int `json:"days_of_week"`
+}
+
+type ServiceAccountBaseline struct {
+	AllowedSourceIPs   []string     `json:"allowed_source_ips"`
+	AllowedTargetSPNs  []string     `json:"allowed_target_spns"`
+	AllowedLogonTypes  []int        `json:"allowed_logon_types"`
+	AllowedTimeWindows []TimeWindow `json:"allowed_time_windows"`
+	AllowedProtocols   []string     `json:"allowed_protocols"`
+}
+
+type BehaviouralProfile struct {
+	AccountSID          string                  `json:"account_sid"`
+	SamAccountName      string                  `json:"sam_account_name"`
+	ObservationStart    time.Time               `json:"observation_start"`
+	ObservationEnd      time.Time               `json:"observation_end"`
+	TotalAuthCount      int                     `json:"total_auth_count"`
+	TimeOfDayHistogram  [24]int                 `json:"time_of_day_histogram"`
+	DayOfWeekHistogram  [7]int                  `json:"day_of_week_histogram"`
+	SourceIPs           map[string]int          `json:"source_ips"`
+	TargetSPNs          map[string]int          `json:"target_spns"`
+	LogonTypes          map[int]int             `json:"logon_types"`
+	AuthPackages        map[string]int          `json:"auth_packages"`
+	LastEventTime       time.Time               `json:"last_event_time"`
+	InterArrivalSum     float64                 `json:"inter_arrival_sum"`
+	InterArrivalSumSq   float64                 `json:"inter_arrival_sum_sq"`
+	InterArrivalCount   int                     `json:"inter_arrival_count"`
+	ClassificationScore float64                 `json:"classification_score"`
+	Classified          bool                    `json:"classified"`
+	ClassifiedAt        time.Time               `json:"classified_at"`
+	Baseline            *ServiceAccountBaseline `json:"baseline,omitempty"`
 }

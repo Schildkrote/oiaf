@@ -16,29 +16,31 @@ import (
 )
 
 type MemoryStore struct {
-	mu            sync.RWMutex
-	identities    map[string]*types.Identity
-	devices       map[string]*types.Device
-	resources     map[string]*types.Resource
-	adapters      map[string]*types.Adapter
-	policies      map[string]*types.Policy
-	challenges    map[string]*types.Challenge
-	factors       map[string]*types.Factor
-	authTokens    map[string]*types.AuthToken
-	auditEvents   []*types.AuditEvent
-	auditLastHash string
+	mu                  sync.RWMutex
+	identities          map[string]*types.Identity
+	devices             map[string]*types.Device
+	resources           map[string]*types.Resource
+	adapters            map[string]*types.Adapter
+	policies            map[string]*types.Policy
+	challenges          map[string]*types.Challenge
+	factors             map[string]*types.Factor
+	authTokens          map[string]*types.AuthToken
+	auditEvents         []*types.AuditEvent
+	auditLastHash       string
+	behaviouralProfiles map[string]*types.BehaviouralProfile
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		identities: make(map[string]*types.Identity),
-		devices:    make(map[string]*types.Device),
-		resources:  make(map[string]*types.Resource),
-		adapters:   make(map[string]*types.Adapter),
-		policies:   make(map[string]*types.Policy),
-		challenges: make(map[string]*types.Challenge),
-		factors:    make(map[string]*types.Factor),
-		authTokens: make(map[string]*types.AuthToken),
+		identities:          make(map[string]*types.Identity),
+		devices:             make(map[string]*types.Device),
+		resources:           make(map[string]*types.Resource),
+		adapters:            make(map[string]*types.Adapter),
+		policies:            make(map[string]*types.Policy),
+		challenges:          make(map[string]*types.Challenge),
+		factors:             make(map[string]*types.Factor),
+		authTokens:          make(map[string]*types.AuthToken),
+		behaviouralProfiles: make(map[string]*types.BehaviouralProfile),
 	}
 }
 
@@ -52,6 +54,9 @@ func (m *MemoryStore) Factors(_ context.Context) FactorStore       { return &mem
 func (m *MemoryStore) AuthTokens(_ context.Context) AuthTokenStore { return &memoryAuthTokenStore{m} }
 func (m *MemoryStore) AuditEvents(_ context.Context) AuditEventStore {
 	return &memoryAuditEventStore{m}
+}
+func (m *MemoryStore) BehaviouralProfiles(_ context.Context) BehaviouralProfileStore {
+	return &memoryBehaviouralProfileStore{m}
 }
 func (m *MemoryStore) Close() error { return nil }
 
@@ -506,4 +511,40 @@ func computeAuditHash(prevHash string, event *types.AuditEvent) string {
 	data, _ := json.Marshal(noHash)
 	h := sha256.Sum256(append([]byte(prevHash), data...))
 	return hex.EncodeToString(h[:])
+}
+
+type memoryBehaviouralProfileStore struct{ m *MemoryStore }
+
+func (s *memoryBehaviouralProfileStore) Get(_ context.Context, accountSID string) (*types.BehaviouralProfile, error) {
+	s.m.mu.RLock()
+	defer s.m.mu.RUnlock()
+	v, ok := s.m.behaviouralProfiles[accountSID]
+	if !ok {
+		return nil, fmt.Errorf("not found: %s", accountSID)
+	}
+	return v, nil
+}
+
+func (s *memoryBehaviouralProfileStore) Upsert(_ context.Context, profile *types.BehaviouralProfile) error {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	s.m.behaviouralProfiles[profile.AccountSID] = profile
+	return nil
+}
+
+func (s *memoryBehaviouralProfileStore) List(_ context.Context) ([]*types.BehaviouralProfile, error) {
+	s.m.mu.RLock()
+	defer s.m.mu.RUnlock()
+	out := make([]*types.BehaviouralProfile, 0, len(s.m.behaviouralProfiles))
+	for _, v := range s.m.behaviouralProfiles {
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+func (s *memoryBehaviouralProfileStore) Delete(_ context.Context, accountSID string) error {
+	s.m.mu.Lock()
+	defer s.m.mu.Unlock()
+	delete(s.m.behaviouralProfiles, accountSID)
+	return nil
 }

@@ -71,6 +71,26 @@ func (e *RuleEngine) Score(ctx context.Context, req types.AccessRequest) (types.
 		add(60, "service_account_interactive")
 	}
 
+	if req.Context.BaselineDeviation {
+		add(50, "service_account_baseline_deviation")
+	}
+
+	if req.Identity.LastLogonDays > 90 {
+		add(20, "stale_account")
+	}
+
+	if req.Identity.PasswordNeverExpires {
+		add(15, "password_never_expires")
+	}
+
+	if req.Identity.HasSPN && !req.Identity.IsGMSA {
+		add(25, "spn_bearing_unmanaged")
+	}
+
+	if req.Identity.Privileged && req.Identity.LastLogonDays > 30 {
+		add(40, "privileged_stale")
+	}
+
 	if !req.Device.Managed {
 		add(15, "unmanaged_device")
 	}
