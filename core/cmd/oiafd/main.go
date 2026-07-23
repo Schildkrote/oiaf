@@ -19,6 +19,8 @@ import (
 	"github.com/Schildkrote/oiaf/core/internal/auth"
 	"github.com/Schildkrote/oiaf/core/internal/challenge"
 	"github.com/Schildkrote/oiaf/core/internal/config"
+	"github.com/Schildkrote/oiaf/core/internal/discovery"
+	"github.com/Schildkrote/oiaf/core/internal/inventory"
 	"github.com/Schildkrote/oiaf/core/internal/logging"
 	"github.com/Schildkrote/oiaf/core/internal/mfa"
 	"github.com/Schildkrote/oiaf/core/internal/policy"
@@ -65,6 +67,19 @@ func main() {
 	pushSvc := mfa.NewPushService(store, cfg.Security.PushTimestampSkewSeconds)
 	challengeSvc := challenge.New(store, totpSvc, pushSvc, auditSvc, cfg.Security.ChallengeTTLSeconds, cfg.Security.TOTPMaxAttempts)
 
+	discoveryEngine := discovery.NewEngine(store, discovery.DefaultWeights())
+
+	var inventoryScanner *inventory.Scanner
+	if cfg.AD.LDAPURL != "" {
+		inventoryScanner = inventory.NewScanner(inventory.Config{
+			LDAPURL:            cfg.AD.LDAPURL,
+			BindDN:             cfg.AD.BindDN,
+			BindPassword:       cfg.AD.BindPassword,
+			BaseDN:             cfg.AD.BaseDN,
+			InsecureSkipVerify: cfg.AD.InsecureSkipVerify,
+		}, store)
+	}
+
 	ctx := context.Background()
 	if _, err := authSvc.RegisterToken(ctx, cfg.AdminToken(), "admin", types.RoleAdmin); err != nil {
 		logger.Error("failed to register admin token", "error", err)
@@ -75,7 +90,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc)
+	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc, discoveryEngine, inventoryScanner)
 
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

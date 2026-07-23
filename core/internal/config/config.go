@@ -16,6 +16,7 @@ type Config struct {
 	Security         SecurityConfig `yaml:"security"`
 	Policy           PolicyConfig   `yaml:"policy"`
 	Risk             RiskConfig     `yaml:"risk"`
+	AD               ADConfig       `yaml:"ad"`
 	allowInsecureDev bool
 }
 
@@ -53,6 +54,14 @@ type RiskThresholds struct {
 	Elevated int `yaml:"elevated"`
 	High     int `yaml:"high"`
 	VeryHigh int `yaml:"very_high"`
+}
+
+type ADConfig struct {
+	LDAPURL            string `yaml:"ldap_url"`
+	BindDN             string `yaml:"bind_dn"`
+	BindPassword       string `yaml:"bind_password"`
+	BaseDN             string `yaml:"base_dn"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
 func Default() *Config {
@@ -131,6 +140,18 @@ func applyEnv(cfg *Config) {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.allowInsecureDev = b
 		}
+	}
+	if v, ok := os.LookupEnv("OIAF_AD_LDAP_URL"); ok {
+		cfg.AD.LDAPURL = v
+	}
+	if v, ok := os.LookupEnv("OIAF_AD_BIND_DN"); ok {
+		cfg.AD.BindDN = v
+	}
+	if v, ok := os.LookupEnv("OIAF_AD_BIND_PASSWORD"); ok {
+		cfg.AD.BindPassword = v
+	}
+	if v, ok := os.LookupEnv("OIAF_AD_BASE_DN"); ok {
+		cfg.AD.BaseDN = v
 	}
 }
 

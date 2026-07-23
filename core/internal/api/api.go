@@ -13,6 +13,8 @@ import (
 	"github.com/Schildkrote/oiaf/core/internal/audit"
 	"github.com/Schildkrote/oiaf/core/internal/auth"
 	"github.com/Schildkrote/oiaf/core/internal/challenge"
+	"github.com/Schildkrote/oiaf/core/internal/discovery"
+	"github.com/Schildkrote/oiaf/core/internal/inventory"
 	"github.com/Schildkrote/oiaf/core/internal/mfa"
 	"github.com/Schildkrote/oiaf/core/internal/policy"
 	"github.com/Schildkrote/oiaf/core/internal/risk"
@@ -29,10 +31,12 @@ type Handler struct {
 	challenge *challenge.Service
 	totp      *mfa.TOTPService
 	push      *mfa.PushService
+	discovery *discovery.Engine
+	inventory *inventory.Scanner
 	logger    *slog.Logger
 }
 
-func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, logger *slog.Logger) *Handler {
+func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, logger *slog.Logger) *Handler {
 	return &Handler{
 		store:     store,
 		auth:      authSvc,
@@ -42,6 +46,8 @@ func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audi
 		challenge: challengeSvc,
 		totp:      totpSvc,
 		push:      pushSvc,
+		discovery: discoveryEngine,
+		inventory: inventoryScanner,
 		logger:    logger,
 	}
 }
@@ -85,6 +91,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 
 	mux.Handle("GET /v1/audit/events", protected(h.handleListAuditEvents))
 	mux.Handle("GET /v1/audit/verify", protected(h.handleVerifyAudit))
+
+	mux.Handle("POST /v1/ad/events", protected(h.handleADEvents))
+	mux.Handle("GET /v1/ad/profiles", protected(h.handleADProfiles))
+	mux.Handle("POST /v1/ad/inventory/scan", protected(h.handleADInventoryScan))
 }
 
 func (h *Handler) handleAccessEvaluate(w http.ResponseWriter, r *http.Request) {
@@ -635,6 +645,89 @@ func (h *Handler) handleVerifyAudit(w http.ResponseWriter, r *http.Request) {
 		"valid": valid,
 		"count": count,
 	})
+}
+
+func (h *Handler) handleADEvents(w http.ResponseWriter, r *http.Request) {
+	var batch types.ADAuthEventBatch
+	if err := decodeJSON(r, &batch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ctx := r.Context()
+
+	decisions, err := h.discovery.Ingest(ctx, batch.Events)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "event ingestion failed")
+		return
+	}
+
+	for i := range batch.Events {
+		ev := &batch.Events[i]
+		h.audit.Emit(ctx, "ad.auth_event",
+			types.AuditActor{Type: types.ActorUser, ID: ev.AccountName},
+			types.AuditTarget{Type: types.TargetIdentity, ID: ev.AccountSID},
+			types.DecisionAllow, 0, nil,
+			map[string]interface{}{
+				"event_id":     ev.EventID,
+				"logon_type":   ev.LogonType,
+				"auth_package": ev.AuthPackage,
+				"source_ip":    ev.SourceIP,
+				"target_spn":   ev.TargetSPN,
+				"dc_name":      ev.DCName,
+				"event_type":   ev.EventType,
+			},
+		)
+	}
+
+	for _, d := range decisions {
+		h.audit.Emit(ctx, "ad.baseline_deviation",
+			types.AuditActor{Type: types.ActorUser, ID: d.AccountName},
+			types.AuditTarget{Type: types.TargetIdentity, ID: d.AccountSID},
+			d.Decision, d.RiskScore, d.Reasons, nil,
+		)
+	}
+
+	writeJSON(w, http.StatusAccepted, types.ADAuthEventBatchResponse{
+		Accepted:  len(batch.Events),
+		Decisions: decisions,
+	})
+}
+
+func (h *Handler) handleADProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles, err := h.discovery.Profiles(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list profiles")
+		return
+	}
+	writeJSON(w, http.StatusOK, profiles)
+}
+
+func (h *Handler) handleADInventoryScan(w http.ResponseWriter, r *http.Request) {
+	if h.inventory == nil {
+		writeError(w, http.StatusServiceUnavailable, "inventory scanner not configured")
+		return
+	}
+
+	summary, err := h.inventory.Scan(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "inventory scan failed: "+err.Error())
+		return
+	}
+
+	h.audit.Emit(r.Context(), "ad.inventory_scan",
+		types.AuditActor{Type: types.ActorSystem, ID: "oiaf"},
+		types.AuditTarget{Type: types.TargetIdentity, ID: "ad-inventory"},
+		types.DecisionAllow, 0, nil,
+		map[string]interface{}{
+			"total_accounts":      summary.TotalAccounts,
+			"service_accounts":    summary.ServiceAccounts,
+			"privileged_accounts": summary.PrivilegedAccounts,
+			"stale_accounts":      summary.StaleAccounts,
+		},
+	)
+
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

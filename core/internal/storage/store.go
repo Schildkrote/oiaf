@@ -19,6 +19,7 @@ type Store interface {
 	Factors(ctx context.Context) FactorStore
 	AuthTokens(ctx context.Context) AuthTokenStore
 	AuditEvents(ctx context.Context) AuditEventStore
+	BehaviouralProfiles(ctx context.Context) BehaviouralProfileStore
 	Close() error
 }
 
@@ -99,4 +100,11 @@ type AuditFilter struct {
 	Since        string
 	Until        string
 	Limit        int
+}
+
+type BehaviouralProfileStore interface {
+	Get(ctx context.Context, accountSID string) (*types.BehaviouralProfile, error)
+	Upsert(ctx context.Context, profile *types.BehaviouralProfile) error
+	List(ctx context.Context) ([]*types.BehaviouralProfile, error)
+	Delete(ctx context.Context, accountSID string) error
 }
