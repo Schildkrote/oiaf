@@ -1,0 +1,40 @@
+name: RFC Proposal
+description: Propose an RFC for OIAF
+title: "[RFC] "
+labels: rfc
+body:
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      description: Short descriptive title for the RFC
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One-paragraph summary of the proposal
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this change needed?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Detailed description of the proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Alternative approaches considered
+    validations:
+      required: false

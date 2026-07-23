@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Schildkrote/oiaf/api/jsonschema/challenge.schema.json",
+  "title": "Challenge",
+  "description": "An MFA challenge issued when an access decision requires step-up verification.",
+  "type": "object",
+  "required": ["id", "identity_id", "request_id", "methods", "status"],
+  "properties": {
+    "id": { "type": "string" },
+    "identity_id": { "type": "string" },
+    "request_id": { "type": "string" },
+    "methods": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["totp", "push", "webauthn", "email", "sms"]
+      },
+      "minItems": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "approved", "denied", "expired", "failed"]
+    },
+    "push_number": { "type": "integer", "minimum": 0, "maximum": 99 },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "max_attempts": { "type": "integer", "minimum": 1 },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "resolved_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

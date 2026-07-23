@@ -1,0 +1,37 @@
+name: Adapter Request
+description: Request a new adapter for OIAF
+title: "[ADAPTER] "
+labels: adapter
+body:
+  - type: input
+    id: adapter-name
+    attributes:
+      label: Adapter Name
+      description: Name of the adapter (e.g., Okta, Azure AD, LDAP)
+    validations:
+      required: true
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol/System
+      description: Protocol or system the adapter interfaces with (e.g., SCIM, SAML, OIDC)
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: Describe the use case for this adapter
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Low
+        - Medium
+        - High
+        - Critical
+    validations:
+      required: false

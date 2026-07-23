@@ -1,0 +1,920 @@
+openapi: 3.0.3
+info:
+  title: OIAF API
+  description: >
+    Open Identity Access Firewall (OIAF) control-plane API. Risk-based access
+    control and MFA orchestration for hybrid identity.
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local development
+security:
+  - bearerAuth: []
+tags:
+  - name: access
+  - name: challenge
+  - name: identities
+  - name: devices
+  - name: policies
+  - name: adapters
+  - name: audit
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /readyz:
+    get:
+      summary: Readiness probe
+      security: []
+      responses:
+        "200":
+          description: Ready
+  /version:
+    get:
+      summary: Version info
+      security: []
+      responses:
+        "200":
+          description: Version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  name:
+                    type: string
+  /v1/access/evaluate:
+    post:
+      tags: [access]
+      summary: Evaluate an access request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessRequest"
+      responses:
+        "200":
+          description: Access decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessDecision"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /v1/challenge/{id}/verify:
+    post:
+      tags: [challenge]
+      summary: Verify a challenge (TOTP or push)
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum: [totp, push]
+                code:
+                  type: string
+                device_id:
+                  type: string
+                number:
+                  type: integer
+                signature:
+                  type: string
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Challenge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/identities:
+    get:
+      tags: [identities]
+      summary: List identities
+      responses:
+        "200":
+          description: Identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Identity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [identities]
+      summary: Create identity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Identity"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/identities/{id}:
+    get:
+      tags: [identities]
+      summary: Get identity
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [identities]
+      summary: Update identity
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Identity"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [identities]
+      summary: Delete identity
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/identities/{id}/factors/totp/enroll:
+    post:
+      tags: [identities]
+      summary: Enroll a TOTP factor
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "201":
+          description: Enrollment details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factor_id:
+                    type: string
+                  secret:
+                    type: string
+                  otpauth_uri:
+                    type: string
+                  status:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/identities/{id}/factors/totp/activate:
+    post:
+      tags: [identities]
+      summary: Activate a TOTP factor
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                factor_id:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "200":
+          description: Activated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/devices:
+    get:
+      tags: [devices]
+      summary: List devices
+      responses:
+        "200":
+          description: Devices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [devices]
+      summary: Register a push device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                identity_id:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Device and one-time secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device:
+                    $ref: "#/components/schemas/Device"
+                  secret:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/devices/{id}:
+    get:
+      tags: [devices]
+      summary: Get device
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [devices]
+      summary: Delete device
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/devices/{id}/approve-challenge:
+    post:
+      tags: [devices]
+      summary: Approve a push challenge from a device
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                challenge_id:
+                  type: string
+                number:
+                  type: integer
+                signature:
+                  type: string
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Challenge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/policies:
+    get:
+      tags: [policies]
+      summary: List policies
+      responses:
+        "200":
+          description: Policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [policies]
+      summary: Create policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/policies/test:
+    post:
+      tags: [policies]
+      summary: Test a policy against a request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                policy:
+                  $ref: "#/components/schemas/Policy"
+                request:
+                  $ref: "#/components/schemas/AccessRequest"
+      responses:
+        "200":
+          description: Policy decision
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/policies/{id}:
+    get:
+      tags: [policies]
+      summary: Get policy
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [policies]
+      summary: Update policy
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [policies]
+      summary: Delete policy
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/adapters:
+    get:
+      tags: [adapters]
+      summary: List adapters
+      responses:
+        "200":
+          description: Adapters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Adapter"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [adapters]
+      summary: Create adapter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                enabled:
+                  type: boolean
+      responses:
+        "201":
+          description: Adapter and one-time token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  adapter:
+                    $ref: "#/components/schemas/Adapter"
+                  token:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/adapters/{id}:
+    get:
+      tags: [adapters]
+      summary: Get adapter
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Adapter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Adapter"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [adapters]
+      summary: Delete adapter
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/adapters/{id}/rotate-token:
+    post:
+      tags: [adapters]
+      summary: Rotate adapter token
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Adapter and new one-time token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  adapter:
+                    $ref: "#/components/schemas/Adapter"
+                  token:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/audit/events:
+    get:
+      tags: [audit]
+      summary: List audit events
+      parameters:
+        - name: identity_id
+          in: query
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - name: decision
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: risk_score_min
+          in: query
+          schema:
+            type: integer
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/audit/verify:
+    get:
+      tags: [audit]
+      summary: Verify the audit hash chain
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  count:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+    AccessRequest:
+      type: object
+      required: [identity, resource, protocol]
+      properties:
+        identity:
+          type: object
+          properties:
+            username:
+              type: string
+            groups:
+              type: array
+              items:
+                type: string
+            type:
+              type: string
+            privileged:
+              type: boolean
+            usual_geo:
+              type: string
+        resource:
+          type: object
+          properties:
+            type:
+              type: string
+            name:
+              type: string
+            sensitivity:
+              type: string
+              enum: [low, medium, high, critical]
+        protocol:
+          type: object
+          properties:
+            name:
+              type: string
+        source:
+          type: object
+          properties:
+            ip:
+              type: string
+            geo:
+              type: string
+            reputation:
+              type: string
+        device:
+          type: object
+          properties:
+            managed:
+              type: boolean
+            compliant:
+              type: boolean
+        context:
+          type: object
+          properties:
+            mfa_recent:
+              type: boolean
+            interactive:
+              type: boolean
+    AccessDecision:
+      type: object
+      properties:
+        request_id:
+          type: string
+        decision:
+          type: string
+          enum: [allow, deny, challenge, alert]
+        risk_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        reasons:
+          type: array
+          items:
+            type: string
+        challenge:
+          type: object
+          properties:
+            id:
+              type: string
+            methods:
+              type: array
+              items:
+                type: string
+                enum: [totp, push, webauthn, email, sms]
+            expires_at:
+              type: string
+              format: date-time
+    Challenge:
+      type: object
+      properties:
+        id:
+          type: string
+        identity_id:
+          type: string
+        request_id:
+          type: string
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [totp, push, webauthn, email, sms]
+        status:
+          type: string
+          enum: [pending, approved, denied, expired, failed]
+        push_number:
+          type: integer
+        attempts:
+          type: integer
+        max_attempts:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+    Identity:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        type:
+          type: string
+          enum: [person, service_account, machine]
+        groups:
+          type: array
+          items:
+            type: string
+        email:
+          type: string
+        privileged:
+          type: boolean
+        usual_geo:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+        identity_id:
+          type: string
+        name:
+          type: string
+        managed:
+          type: boolean
+        compliant:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    Policy:
+      type: object
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+        effect:
+          type: string
+          enum: [allow, deny, challenge, alert]
+        conditions:
+          type: object
+        challenge:
+          type: object
+          properties:
+            methods:
+              type: array
+              items:
+                type: string
+                enum: [totp, push, webauthn, email, sms]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Adapter:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+        actor:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [user, adapter, admin, system]
+            id:
+              type: string
+        target:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [identity, resource, policy, challenge, adapter]
+            id:
+              type: string
+        decision:
+          type: string
+          enum: [allow, deny, challenge, alert]
+        risk_score:
+          type: integer
+        reasons:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+        previous_hash:
+          type: string
+        hash:
+          type: string

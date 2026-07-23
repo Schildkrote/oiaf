@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Schildkrote/oiaf/api/jsonschema/access_request.schema.json",
+  "title": "AccessRequest",
+  "description": "A structured request describing who is accessing what, how, and from where.",
+  "type": "object",
+  "required": ["identity", "resource", "protocol"],
+  "additionalProperties": false,
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["username"],
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "groups": { "type": "array", "items": { "type": "string" } },
+        "type": {
+          "type": "string",
+          "enum": ["person", "service_account", "machine"]
+        },
+        "privileged": { "type": "boolean" },
+        "usual_geo": { "type": "string" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "sensitivity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "ip": { "type": "string" },
+        "geo": { "type": "string" },
+        "reputation": {
+          "type": "string",
+          "enum": ["good", "unknown", "bad"]
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "managed": { "type": "boolean" },
+        "compliant": { "type": "boolean" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "mfa_recent": { "type": "boolean" },
+        "interactive": { "type": "boolean" }
+      }
+    }
+  }
+}

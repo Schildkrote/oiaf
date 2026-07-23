@@ -1,0 +1,62 @@
+services:
+  oiaf-core:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - OIAF_LISTEN_ADDR=0.0.0.0:8080
+      - OIAF_LOG_LEVEL=info
+      - OIAF_LOG_FORMAT=json
+      - OIAF_ADMIN_TOKEN=${OIAF_ADMIN_TOKEN}
+      - OIAF_ADAPTER_TOKEN=${OIAF_ADAPTER_TOKEN}
+      - OIAF_DATABASE_URL=postgres://oiaf:${POSTGRES_PASSWORD}@postgres:5432/oiaf?sslmode=disable
+      - OIAF_REDIS_URL=redis://redis:6379/0
+      - OIAF_UI_ENABLED=true
+      - OIAF_METRICS_ENABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/oiafctl", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=oiaf
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=oiaf
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oiaf"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:

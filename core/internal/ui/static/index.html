@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OIAF Admin Console</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div id="security-warning" class="warning-banner" role="alert">
+    <strong>Security notice:</strong> this console holds an admin token with full control over
+    identities, policies and adapters. Never use it on shared or untrusted machines. The token is
+    kept in memory only and is discarded when this tab closes. All actions are recorded in the
+    tamper-evident audit log.
+  </div>
+
+  <section id="login" class="login-screen">
+    <div class="login-card">
+      <p class="login-eyebrow">Open Identity Access Firewall</p>
+      <h1 class="login-title">OIAF <span>Admin Console</span></h1>
+      <p class="login-sub">Authenticate with an admin token to manage the control plane.</p>
+
+      <form id="login-form" class="login-form" autocomplete="off">
+        <label for="token-input">Admin token</label>
+        <input id="token-input" type="password" name="token" placeholder="oiaf_adm_..."
+               autocomplete="off" spellcheck="false" required>
+        <button id="connect-btn" type="submit">Connect</button>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+      </form>
+
+      <p class="login-hint">Tokens are issued via <code>oiafctl tokens create --role admin</code>.</p>
+    </div>
+  </section>
+
+  <div id="app" style="display:none">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">OIAF</span>
+        <span class="brand-name">Admin Console</span>
+      </div>
+      <div class="header-meta">
+        <span id="conn-status" class="conn-status">connected</span>
+        <button id="refresh-btn" type="button" class="btn btn-ghost">Refresh</button>
+        <button id="disconnect-btn" type="button" class="btn btn-ghost btn-danger">Disconnect</button>
+      </div>
+    </header>
+
+    <nav id="nav-tabs" class="tabs" aria-label="Admin sections">
+      <button type="button" class="tab is-active" data-panel="dashboard">Dashboard</button>
+      <button type="button" class="tab" data-panel="identities">Identities</button>
+      <button type="button" class="tab" data-panel="policies">Policies</button>
+      <button type="button" class="tab" data-panel="challenges">Challenges</button>
+      <button type="button" class="tab" data-panel="audit">Audit</button>
+      <button type="button" class="tab" data-panel="adapters">Adapters</button>
+      <button type="button" class="tab" data-panel="settings">Settings</button>
+    </nav>
+
+    <main class="content">
+
+      <div class="panel" id="panel-dashboard">
+        <h2>Dashboard</h2>
+        <div id="dashboard-stats" class="stat-grid"></div>
+        <div class="card">
+          <h3>Recent audit events</h3>
+          <div id="dashboard-recent" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-identities">
+        <h2>Identities</h2>
+        <div class="card">
+          <div id="identities-table" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-policies">
+        <h2>Policies</h2>
+        <div class="card">
+          <div id="policies-table" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-challenges">
+        <h2>Challenges</h2>
+        <div class="card">
+          <div id="challenges-table" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-audit">
+        <h2>Audit log</h2>
+        <div class="card">
+          <div class="toolbar">
+            <button id="audit-verify-btn" type="button" class="btn">Verify chain integrity</button>
+            <span id="audit-verify-result" class="verify-result"></span>
+          </div>
+          <div id="audit-table" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-adapters">
+        <h2>Adapters</h2>
+        <div class="card">
+          <div id="adapters-table" class="table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel-settings">
+        <h2>Settings</h2>
+        <div class="card">
+          <h3>Session</h3>
+          <p class="settings-note">
+            The admin token is stored in JavaScript memory only. It is never written to
+            localStorage, sessionStorage or cookies, and is destroyed when this page is closed
+            or reloaded.
+          </p>
+          <div class="toolbar">
+            <button id="settings-disconnect-btn" type="button" class="btn btn-danger">
+              Clear token and disconnect
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Server</h3>
+          <div id="server-info" class="kv-list"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

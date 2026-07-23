@@ -1,0 +1,7 @@
+.git
+.oiaf
+.env
+*.md
+docs/
+test/
+.github/

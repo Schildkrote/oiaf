@@ -1,0 +1,12 @@
+{
+  "id": "break-glass-access",
+  "description": "Allow break-glass access for emergency accounts with alert",
+  "enabled": true,
+  "priority": 300,
+  "effect": "alert",
+  "conditions": {
+    "all": [
+      {"path": "identity.groups", "op": "contains", "value": "BreakGlass"}
+    ]
+  }
+}

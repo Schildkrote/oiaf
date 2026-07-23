@@ -1,0 +1,15 @@
+services:
+  oiaf-core:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - OIAF_LISTEN_ADDR=0.0.0.0:8080
+      - OIAF_LOG_LEVEL=debug
+      - OIAF_LOG_FORMAT=text
+      - OIAF_UI_ENABLED=true
+      - OIAF_METRICS_ENABLED=true
+      - OIAF_ALLOW_INSECURE_DEV=true
+    restart: unless-stopped
