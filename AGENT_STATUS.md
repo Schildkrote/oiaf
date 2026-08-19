@@ -1,8 +1,14 @@
 # Agent Status
 
-## Current Phase: Complete
+## Current Phase: PAM enforcement path (v0.2)
 
-All 13 phases of the initial OIAF build are complete.
+The PAM adapter is now a real, test-covered enforcement path:
+`oiaf-pam-helper` reads the PAM environment, calls `/v1/access/evaluate`,
+maps the decision to a PAM exit code, performs interactive TOTP challenges
+(on the PAM TTY, stdin fallback), and fails closed by default. The e2e suite
+covers allow / challenge / deny / fail-closed / fail-open (steps 11–14), and
+the service-account discovery engine has unit tests for classification and
+baseline deviation.
 
 ## Completed Work
 
@@ -100,7 +106,10 @@ make verify       # fmt + vet + test + e2e
 
 - Storage: only MemoryStore is functional; PostgresStore is a documented skeleton
 - MFA: TOTP and push simulator are functional; WebAuthn/email/SMS are skeletons
-- Adapters: all are skeletons/prototypes, not production-ready
+- Adapters: RADIUS/LDAP/Okta/Entra/Duo/webhook are skeletons/prototypes,
+  not production-ready. The **PAM adapter is implemented** (evaluate +
+  TOTP challenge + fail-closed, unit + e2e tested) but not packaged, and is
+  not field-tested behind a real PAM stack.
 - Metrics: /metrics returns placeholder (Prometheus integration pending)
 - OPA policy engine: returns not implemented
 - No Docker build verified (Docker may not be available)
@@ -128,6 +137,8 @@ None.
 - Add rate limiting middleware
 - Implement WebAuthn factor
 - Build working RADIUS adapter prototype
+- Package oiaf-pam-helper (systemd unit, /usr/local/bin install) and
+  field-test it in a VM behind a real PAM stack
 
 ## Suggested Next RFCs
 
