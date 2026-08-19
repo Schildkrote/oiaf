@@ -1,3 +1,8 @@
+# Local dev stack. Ports bind 127.0.0.1 only.
+#
+# HONESTY: oiafd currently uses MemoryStore only. Postgres and Redis are started
+# for future backends / operator familiarity; core does NOT persist to them yet.
+# Do not treat this compose file as "production with durable DB."
 services:
   oiaf-core:
     build:
@@ -11,15 +16,11 @@ services:
       - OIAF_LOG_FORMAT=json
       - OIAF_ADMIN_TOKEN=${OIAF_ADMIN_TOKEN}
       - OIAF_ADAPTER_TOKEN=${OIAF_ADAPTER_TOKEN}
-      - OIAF_DATABASE_URL=postgres://oiaf:${POSTGRES_PASSWORD}@postgres:5432/oiaf?sslmode=disable
-      - OIAF_REDIS_URL=redis://redis:6379/0
+      # Reserved for a future PostgresStore — ignored by MemoryStore today:
+      - OIAF_DATABASE_URL=${OIAF_DATABASE_URL:-}
+      - OIAF_REDIS_URL=${OIAF_REDIS_URL:-}
       - OIAF_UI_ENABLED=true
       - OIAF_METRICS_ENABLED=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/usr/local/bin/oiafctl", "version"]
@@ -27,11 +28,13 @@ services:
       timeout: 5s
       retries: 3
 
+  # Optional sidecars for local experiments. Not required for MemoryStore MVP.
   postgres:
+    profiles: ["durable-preview"]
     image: postgres:16-alpine
     environment:
       - POSTGRES_USER=oiaf
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-oiaf-dev-only}
       - POSTGRES_DB=oiaf
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -45,6 +48,7 @@ services:
       retries: 5
 
   redis:
+    profiles: ["durable-preview"]
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"

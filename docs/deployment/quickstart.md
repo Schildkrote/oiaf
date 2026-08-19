@@ -1,6 +1,10 @@
 # Deployment Quickstart (Docker Compose)
 
-This guide starts OIAF with Postgres and Redis using Docker Compose.
+> **Honesty:** the running `oiafd` binary uses **MemoryStore** today. Postgres
+> and Redis in compose are under profile `durable-preview` for future backends;
+> they are **not** a working durable control plane yet. Prefer `make dev` for MVP.
+
+This guide starts OIAF (and optionally Postgres/Redis sidecars) using Docker Compose.
 
 ## Prerequisites
 
@@ -22,10 +26,12 @@ Or directly:
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-The stack exposes:
-- OIAF core on `127.0.0.1:8080`
-- Postgres on `127.0.0.1:5432`
-- Redis on `127.0.0.1:6379`
+Default (`docker compose up`) exposes:
+- OIAF core on `127.0.0.1:8080` (in-memory state)
+
+Optional durable-preview sidecars (`--profile durable-preview`):
+- Postgres on `127.0.0.1:5432` (not consumed by core yet)
+- Redis on `127.0.0.1:6379` (not consumed by core yet)
 
 All ports are bound to loopback by default.
 

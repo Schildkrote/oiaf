@@ -12,3 +12,8 @@ dist/
 tmp/
 .DS_Store
 *.log
+
+# Built binaries (build with `make` / `go build`; never commit)
+/oiafctl
+/simulator
+/oiafd

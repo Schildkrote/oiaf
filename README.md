@@ -3,7 +3,7 @@
 > Risk-based access control and MFA orchestration for hybrid identity.
 
 > [!WARNING]
-> **Experimental.** OIAF is pre-release software. Interfaces, data formats, and
+> **Experimental / v0.1 scaffold.** OIAF is pre-release software. Interfaces, data formats, and
 > behavior may change without notice. Do not deploy in production without
 > independent security review.
 
@@ -50,20 +50,21 @@ cloud identity providers, and machine identities.
 ## Quickstart
 
 ```bash
-git clone https://github.com/oiaf/oiaf.git
+git clone https://github.com/Schildkrote/oiaf.git
 cd oiaf
 make dev
 ```
 
 ## MVP Scope
 
-- `oiafctl` CLI for administration
+- `oiafctl` CLI for administration (`go build -o oiafctl ./cli/oiafctl` — **binaries are not committed**)
 - Admin UI
 - Policy engine (declarative access policies)
 - Risk engine (contextual risk scoring)
 - TOTP and push MFA
 - Audit logging with hash chain
-- Adapter SDK with reference skeletons
+- Adapter SDK with reference skeletons (**RADIUS/LDAP/Okta/Entra/Duo/webhook stubs exit 1**)
+- **Storage today: MemoryStore only.** `OIAF_DATABASE_URL` / compose Postgres+Redis are **not** wired into a Postgres backend yet
 
 ## DC-Side Monitoring Scope
 

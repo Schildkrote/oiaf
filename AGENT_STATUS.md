@@ -96,6 +96,8 @@ make verify       # fmt + vet + test + e2e
 
 ## Known Limitations
 
+- **Do not commit** `oiafctl` / `simulator` / `oiafd` binaries (gitignored). Build with Make/go.
+
 - Storage: only MemoryStore is functional; PostgresStore is a documented skeleton
 - MFA: TOTP and push simulator are functional; WebAuthn/email/SMS are skeletons
 - Adapters: all are skeletons/prototypes, not production-ready
