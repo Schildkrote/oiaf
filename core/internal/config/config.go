@@ -28,6 +28,9 @@ type ServerConfig struct {
 	MetricsEnabled bool   `yaml:"metrics_enabled"`
 	TLSCertFile    string `yaml:"tls_cert_file"`
 	TLSKeyFile     string `yaml:"tls_key_file"`
+	// Webhooks is the comma-separated list of integration-event subscriber
+	// URLs (open-security-platform spine). Empty = no emission (offline).
+	Webhooks string `yaml:"webhooks"`
 }
 
 type StorageConfig struct {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Schildkrote/oiaf/core/internal/audit"
 	"github.com/Schildkrote/oiaf/core/internal/auth"
+	"github.com/Schildkrote/oiaf/core/internal/bus"
 	"github.com/Schildkrote/oiaf/core/internal/challenge"
 	"github.com/Schildkrote/oiaf/core/internal/discovery"
 	"github.com/Schildkrote/oiaf/core/internal/inventory"
@@ -33,10 +34,11 @@ type Handler struct {
 	push      *mfa.PushService
 	discovery *discovery.Engine
 	inventory *inventory.Scanner
+	bus       *bus.Emitter
 	logger    *slog.Logger
 }
 
-func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, logger *slog.Logger) *Handler {
+func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter, logger *slog.Logger) *Handler {
 	return &Handler{
 		store:     store,
 		auth:      authSvc,
@@ -48,6 +50,7 @@ func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audi
 		push:      pushSvc,
 		discovery: discoveryEngine,
 		inventory: inventoryScanner,
+		bus:       busEmitter,
 		logger:    logger,
 	}
 }
@@ -161,6 +164,21 @@ func (h *Handler) handleAccessEvaluate(w http.ResponseWriter, r *http.Request) {
 		types.AuditTarget{Type: types.TargetResource, ID: req.Resource.Name},
 		decision, riskResult.Score, reasons, nil)
 
+	// Integration event (opt-in, best-effort): OIAF decisions on the OSP spine.
+	if h.bus != nil {
+		h.bus.Emit("access.decided", "evaluate", requestID,
+			map[string]any{
+				"request_id": requestID,
+				"identity":   req.Identity.Username,
+				"resource":   req.Resource.Name,
+			},
+			map[string]any{
+				"decision":   decision,
+				"risk_score": riskResult.Score,
+				"reasons":    reasons,
+			})
+	}
+
 	resp := types.AccessDecision{
 		RequestID: requestID,
 		Decision:  decision,
@@ -204,6 +222,13 @@ func (h *Handler) handleChallengeVerify(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Integration event (opt-in, best-effort): challenge resolution on the spine.
+	if h.bus != nil {
+		h.bus.Emit("challenge.verified", "verify", ch.ID,
+			map[string]any{"request_id": ch.RequestID, "identity_id": ch.IdentityID},
+			map[string]any{"method": body.Method, "status": string(ch.Status)})
 	}
 
 	writeJSON(w, http.StatusOK, ch)

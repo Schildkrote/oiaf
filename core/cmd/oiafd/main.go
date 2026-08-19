@@ -12,11 +12,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Schildkrote/oiaf/core/internal/audit"
 	"github.com/Schildkrote/oiaf/core/internal/auth"
+	"github.com/Schildkrote/oiaf/core/internal/bus"
 	"github.com/Schildkrote/oiaf/core/internal/challenge"
 	"github.com/Schildkrote/oiaf/core/internal/config"
 	"github.com/Schildkrote/oiaf/core/internal/discovery"
@@ -32,6 +34,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "", "path to YAML config file")
+	webhooks := flag.String("webhooks", "", "comma-separated integration-event subscriber URLs (OSP spine)")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -90,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc, discoveryEngine, inventoryScanner)
+	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc, discoveryEngine, inventoryScanner, newBus(cfg, *webhooks, logger))
 
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -152,4 +155,28 @@ func generateToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// newBus builds the integration-event emitter. The -webhooks flag wins over
+// the server.webhooks config; empty in both => nil (no emission, offline).
+func newBus(cfg *config.Config, flagValue string, logger *slog.Logger) *bus.Emitter {
+	urls := flagValue
+	if urls == "" {
+		urls = cfg.Server.Webhooks
+	}
+	if urls == "" {
+		return nil
+	}
+	parts := strings.Split(urls, ",")
+	trimmed := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			trimmed = append(trimmed, p)
+		}
+	}
+	if len(trimmed) == 0 {
+		return nil
+	}
+	logger.Info("integration event emission enabled", "subscribers", trimmed)
+	return bus.New("oiaf", trimmed)
 }

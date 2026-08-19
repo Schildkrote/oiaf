@@ -12,6 +12,7 @@ import (
 	"github.com/Schildkrote/oiaf/core/internal/api"
 	"github.com/Schildkrote/oiaf/core/internal/audit"
 	"github.com/Schildkrote/oiaf/core/internal/auth"
+	"github.com/Schildkrote/oiaf/core/internal/bus"
 	"github.com/Schildkrote/oiaf/core/internal/challenge"
 	"github.com/Schildkrote/oiaf/core/internal/config"
 	"github.com/Schildkrote/oiaf/core/internal/discovery"
@@ -36,10 +37,11 @@ type Server struct {
 	push      *mfa.PushService
 	discovery *discovery.Engine
 	inventory *inventory.Scanner
+	bus       *bus.Emitter
 	http      *http.Server
 }
 
-func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner) *Server {
+func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter) *Server {
 	s := &Server{
 		cfg:       cfg,
 		logger:    logger,
@@ -53,6 +55,7 @@ func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *
 		push:      pushSvc,
 		discovery: discoveryEngine,
 		inventory: inventoryScanner,
+		bus:       busEmitter,
 	}
 	s.http = &http.Server{
 		Addr:    cfg.Server.Addr,
@@ -84,7 +87,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 
-	apiHandler := api.NewHandler(s.store, s.auth, s.audit, s.policy, s.risk, s.challenge, s.totp, s.push, s.discovery, s.inventory, s.logger)
+	apiHandler := api.NewHandler(s.store, s.auth, s.audit, s.policy, s.risk, s.challenge, s.totp, s.push, s.discovery, s.inventory, s.bus, s.logger)
 	authMiddleware := auth.Middleware(s.auth)
 	apiHandler.RegisterRoutes(mux, authMiddleware)
 
