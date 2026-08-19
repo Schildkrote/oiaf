@@ -137,8 +137,9 @@ None.
 - Add rate limiting middleware
 - Implement WebAuthn factor
 - Build working RADIUS adapter prototype
-- Package oiaf-pam-helper (systemd unit, /usr/local/bin install) and
-  field-test it in a VM behind a real PAM stack
+- Field-test oiaf-pam-helper in a Linux VM behind a real PAM stack
+  (packaging is done: `make install-pam` / `make install-server`,
+  `deploy/systemd/`, `adapters/pam/oiaf-pam-field-test.sh`)
 
 ## Suggested Next RFCs
 

@@ -1,0 +1,37 @@
+# OIAF core — systemd unit (server host).
+# Install: sudo cp deploy/systemd/oiafd.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now oiafd
+#
+# EnvironmentFile is optional: without it oiafd uses defaults (127.0.0.1:8080)
+# and generates tokens under .oiaf/ next to the working directory. Put real
+# tokens in /etc/oiaf/oiafd.env (root:root 0640) and reference it below.
+
+[Unit]
+Description=OIAF core (identity access firewall)
+Documentation=https://github.com/Schildkrote/oiaf
+After=network.target
+
+[Service]
+Type=simple
+User=oiaf
+Group=oiaf
+WorkingDirectory=/var/lib/oiaf
+ExecStart=/usr/local/bin/oiafd
+# Optional — uncomment when /etc/oiaf/oiafd.env exists:
+# EnvironmentFile=/etc/oiaf/oiafd.env
+Restart=on-failure
+RestartSec=2
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/oiaf
+CapabilityBoundingSet=
+# The helper + clients only need loopback (or the LAN range) by default.
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1 ::1
+# Loosen IPAddressAllow for remote adapters, e.g. IPAddressAllow=10.0.0.0/8
+
+[Install]
+WantedBy=multi-user.target

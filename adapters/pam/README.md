@@ -11,8 +11,16 @@ failure.
 ## Status
 
 Experimental (M3) — the helper is implemented and covered by unit tests plus
-the e2e suite (`make e2e`, steps 11–14). Not yet packaged or field-tested
-behind a real PAM stack.
+the e2e suite (`make e2e`, steps 11–14). Packaging is in place
+(`deploy/systemd/`, `make install-pam` / `make install-server`,
+`oiaf-pam-field-test.sh`) but **not yet field-tested behind a real PAM
+stack** — run `adapters/pam/oiaf-pam-field-test.sh` on a Linux VM first.
+
+**Installation** — see [INSTALL.md](INSTALL.md):
+- server host: `make install-server` (systemd unit, `oiaf` system user,
+  env template, hardened service)
+- client host: `make install-pam` (helper to `/usr/local/bin`, PAM env file,
+  `pam_exec` fragment)
 
 > **WARNING: PAM lockout risk.** Misconfiguring PAM can lock all users —
 > including root — out of the system. Always:
@@ -83,6 +91,8 @@ auth  [success=ok default=ignore]  pam_exec.so  expose_authtok  /usr/local/bin/o
 - [x] Call OIAF evaluate and map decision to exit code
 - [x] Interactive TOTP challenge via PAM TTY (stdin fallback)
 - [x] Fail-open/fail-closed policy flag
-- [ ] Packaging (systemd, /usr/local/bin install)
+- [x] Packaging (systemd unit for oiafd, install script + PAM fragment,
+      field-test script)
+- [ ] Field test behind a real PAM stack (Linux VM: `oiaf-pam-field-test.sh`)
 - [ ] Forward real group membership without a wrapper (PAM has no native
       group API; consider `pam_groups`-style integration or a getgrent pass)

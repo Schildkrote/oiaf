@@ -1,4 +1,4 @@
-.PHONY: help setup dev run build install test lint fmt vet e2e verify clean docker-build compose-up compose-down logs docs gen
+.PHONY: help setup dev run build install install-pam install-server test lint fmt vet e2e verify clean docker-build compose-up compose-down logs docs gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -18,6 +18,21 @@ build: ## Build oiafd, oiafctl, and oiaf-pam-helper to bin/
 
 install: ## Install all packages
 	go install ./...
+
+install-pam: build ## Install the PAM helper on this (client) host
+	sudo install -m 0755 -o root -g root bin/oiaf-pam-helper /usr/local/bin/
+	sudo bash adapters/pam/oiaf-pam-install.sh /usr/local/bin/oiaf-pam-helper
+
+install-server: build ## Install oiafd + oiafctl and the systemd unit (server host)
+	sudo install -m 0755 -o root -g root bin/oiafd bin/oiafctl /usr/local/bin/
+	sudo useradd --system --create-home --home /var/lib/oiaf --shell /usr/sbin/nologin oiaf
+	sudo install -d -o oiaf -g oiaf -m 0750 /var/lib/oiaf
+	sudo install -d -o root -g oiaf -m 0750 /etc/oiaf
+	sudo install -m 0640 -o root -g oiaf deploy/systemd/oiafd.env /etc/oiaf/oiafd.env
+	sudo install -m 0644 deploy/systemd/oiafd.service /etc/systemd/system/
+	sudo systemctl daemon-reload
+	sudo systemctl enable oiafd
+	@echo "server installed — start with: sudo systemctl start oiafd"
 
 test: ## Run tests
 	go test ./...
