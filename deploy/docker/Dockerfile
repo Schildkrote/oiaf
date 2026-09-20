@@ -9,7 +9,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /oiafctl ./cli/oiafctl
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /oiafd /usr/local/bin/oiafd
 COPY --from=builder /oiafctl /usr/local/bin/oiafctl
-COPY ui/admin-console/ /ui/
 EXPOSE 8080
 USER nonroot
 LABEL org.opencontainers.image.title="OIAF"

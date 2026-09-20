@@ -1,5 +1,11 @@
 # Open Identity Access Firewall (OIAF)
 
+[![CI](https://github.com/Schildkrote/oiaf/actions/workflows/ci.yml/badge.svg)](https://github.com/Schildkrote/oiaf/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Schildkrote/oiaf)](https://goreportcard.com/report/github.com/Schildkrote/oiaf)
+[![Docs](https://img.shields.io/badge/docs-schildkrote.github.io%2Foiaf-indigo)](https://schildkrote.github.io/oiaf/)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+
 > Risk-based access control and MFA orchestration for hybrid identity.
 
 > [!WARNING]
@@ -14,6 +20,18 @@
 OIAF is an open-source identity access firewall that evaluates authentication
 risk and enforces adaptive MFA across Linux, Windows, RADIUS, LDAP, web apps,
 cloud identity providers, and machine identities.
+
+## What it replaces
+
+Nothing in production — yet. OIAF targets the same problem space as commercial
+identity-security platforms (Silverfort, CyberArk, Delinea, Duo, Okta,
+Microsoft Entra ID Protection and others), but it is a v0.1 scaffold: the PAM
+enforcement path is real and packaged, TOTP/push MFA are functional, WebAuthn
+is in progress, and the cloud-IdP adapters are design-stage skeletons. For an
+honest, capability-by-capability comparison against the commercial market —
+including what each maturity level does and does not replace for you — see
+**[OIAF vs commercial identity security](https://schildkrote.github.io/oiaf/comparison/)**
+([docs/comparison.md](docs/comparison.md)).
 
 ## Architecture
 
