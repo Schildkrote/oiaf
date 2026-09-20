@@ -1,10 +1,10 @@
 # Policy Examples
 
-Annotated examples from [`policy/examples/`](../../policy/examples/).
+Annotated examples from [`policy/examples/`](https://github.com/Schildkrote/oiaf/tree/main/policy/examples/).
 
 ## Require MFA for RADIUS VPN
 
-[`require-mfa-radius-vpn.json`](../../policy/examples/require-mfa-radius-vpn.json)
+[`require-mfa-radius-vpn.json`](https://github.com/Schildkrote/oiaf/blob/main/policy/examples/require-mfa-radius-vpn.json)
 
 ```json
 {
@@ -26,14 +26,14 @@ Any RADIUS VPN access must complete TOTP or push MFA.
 
 ## Require MFA for Admin SSH
 
-[`require-mfa-admin-ssh.json`](../../policy/examples/require-mfa-admin-ssh.json)
+[`require-mfa-admin-ssh.json`](https://github.com/Schildkrote/oiaf/blob/main/policy/examples/require-mfa-admin-ssh.json)
 
 Matches `resource.type == "ssh"` **and** membership in `Admins`, then requires
 MFA. Higher priority (100) than the VPN rule.
 
 ## Deny Service Account Interactive Logon
 
-[`deny-service-account-interactive-logon.json`](../../policy/examples/deny-service-account-interactive-logon.json)
+[`deny-service-account-interactive-logon.json`](https://github.com/Schildkrote/oiaf/blob/main/policy/examples/deny-service-account-interactive-logon.json)
 
 ```json
 {
@@ -53,7 +53,7 @@ credential theft. High priority `deny` wins over lower-priority allows.
 
 ## Alert on NTLM by Admins
 
-[`alert-ntlm-admin.json`](../../policy/examples/alert-ntlm-admin.json)
+[`alert-ntlm-admin.json`](https://github.com/Schildkrote/oiaf/blob/main/policy/examples/alert-ntlm-admin.json)
 
 `effect: "alert"` allows access but logs an alert when an admin authenticates
 via the weak NTLM protocol — useful for tracking legacy-protocol usage without
@@ -61,7 +61,7 @@ blocking it.
 
 ## Break-Glass Access
 
-[`break-glass-access.json`](../../policy/examples/break-glass-access.json)
+[`break-glass-access.json`](https://github.com/Schildkrote/oiaf/blob/main/policy/examples/break-glass-access.json)
 
 ```json
 {

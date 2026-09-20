@@ -19,7 +19,7 @@ identities.
 | [Operations](operations/backup-restore.md) | Backup, monitoring, disaster recovery |
 | [Policies](policies/policy-as-code.md) | Policy format, operators, examples |
 | [Contributing](contributing/getting-started.md) | Dev setup, coding standards, RFC process |
-| [API Reference](../api/openapi/oiaf.openapi.yaml) | OpenAPI 3.0 spec |
+| [API Reference](https://github.com/Schildkrote/oiaf/blob/main/api/openapi/oiaf.openapi.yaml) | OpenAPI 3.0 spec |
 
 ## Key Concepts
 
@@ -38,6 +38,6 @@ without notice. Do not deploy in production without independent security review.
 ## Links
 
 - [GitHub](https://github.com/Schildkrote/oiaf)
-- [SECURITY.md](../SECURITY.md)
-- [ROADMAP.md](../ROADMAP.md)
-- [CONTRIBUTING.md](../CONTRIBUTING.md)
+- [SECURITY.md](https://github.com/Schildkrote/oiaf/blob/main/SECURITY.md)
+- [ROADMAP.md](https://github.com/Schildkrote/oiaf/blob/main/ROADMAP.md)
+- [CONTRIBUTING.md](https://github.com/Schildkrote/oiaf/blob/main/CONTRIBUTING.md)

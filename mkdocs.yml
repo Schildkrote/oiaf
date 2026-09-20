@@ -42,3 +42,5 @@ nav:
     - Getting Started: contributing/getting-started.md
     - Development: contributing/development.md
     - RFC Process: contributing/rfc-process.md
+  - RFCs:
+    - "0001: DC Agent + Service Account Discovery": rfcs/0001-dc-agent-service-account-discovery.md

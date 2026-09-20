@@ -41,7 +41,7 @@ Each event records:
 - `metadata` (arbitrary key/value)
 - `previous_hash`, `hash`
 
-See [`audit_event.schema.json`](../../api/jsonschema/audit_event.schema.json).
+See [`audit_event.schema.json`](https://github.com/Schildkrote/oiaf/blob/main/api/jsonschema/audit_event.schema.json).
 
 ## Querying
 
