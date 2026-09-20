@@ -15,7 +15,7 @@ baseline deviation.
 ### Phase 0 - Preparation
 - Go 1.26.5 installed via Homebrew
 - Branch `agent/oiaf-initial-build` created
-- Repository scaffold: .gitignore, LICENSE (Apache-2.0), go.mod, Makefile, config files
+- Repository scaffold: .gitignore, LICENSE (AGPL-3.0-only), go.mod, Makefile, config files
 
 ### Phase 1 - Core Types and Storage
 - Domain types (core/internal/types)

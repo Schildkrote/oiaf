@@ -1,5 +1,5 @@
 // Copyright 2026 OIAF Authors.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Package bus emits OIAF decisions as integration events onto the
 // open-security-platform spine. Events conform to the platform's

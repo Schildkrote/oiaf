@@ -14,5 +14,5 @@ EXPOSE 8080
 USER nonroot
 LABEL org.opencontainers.image.title="OIAF"
 LABEL org.opencontainers.image.description="Open Identity Access Firewall"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
 ENTRYPOINT ["/usr/local/bin/oiafd"]

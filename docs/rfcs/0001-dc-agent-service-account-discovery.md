@@ -748,5 +748,5 @@ horizontal scaling across multiple DCs.
    Windows Server DC the only supported platform?
 
 6. **Licensing of WFP driver:** The WFP driver is a kernel component. Should it
-   be Apache-2.0 (same as OIAF) or a separate licence given its privileged
+   be AGPL-3.0-only (same as OIAF) or a separate licence given its privileged
    position?

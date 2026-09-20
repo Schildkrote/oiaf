@@ -66,4 +66,4 @@ Signed-off-by: Jane Doe <jane@example.com>
 ```
 
 By signing off, you certify that you have the right to submit the contribution
-under the project's Apache-2.0 license.
+under the project's AGPL-3.0-only license.

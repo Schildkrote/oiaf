@@ -1,5 +1,5 @@
 // Copyright 2026 OIAF Authors.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // oiaf-pam-helper is the PAM-side enforcement point for OIAF. It is designed
 // to be invoked from pam_exec.so (expose_authtok) during the auth phase:
