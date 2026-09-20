@@ -105,7 +105,12 @@ make verify       # fmt + vet + test + e2e
 - **Do not commit** `oiafctl` / `simulator` / `oiafd` binaries (gitignored). Build with Make/go.
 
 - Storage: only MemoryStore is functional; PostgresStore is a documented skeleton
-- MFA: TOTP and push simulator are functional; WebAuthn/email/SMS are skeletons
+- MFA: TOTP, push simulator, and WebAuthn (registration + assertion via
+  go-webauthn, unit-tested with real ES256 ceremonies) are functional;
+  email/SMS are skeletons. WebAuthn requires `webauthn.rp_id` +
+  `webauthn.rp_origins` config (localhost defaults for dev); identity-scoped
+  verification sessions are in-memory, the challenge-orchestrated path is
+  store-backed
 - Adapters: RADIUS/LDAP/Okta/Entra/Duo/webhook are skeletons/prototypes,
   not production-ready. The **PAM adapter is implemented** (evaluate +
   TOTP challenge + fail-closed, unit + e2e tested) but not packaged, and is
@@ -135,7 +140,6 @@ None.
 - Implement Prometheus metrics at /metrics
 - Implement PostgresStore
 - Add rate limiting middleware
-- Implement WebAuthn factor
 - Build working RADIUS adapter prototype
 - Field-test oiaf-pam-helper in a Linux VM behind a real PAM stack
   (packaging is done: `make install-pam` / `make install-server`,

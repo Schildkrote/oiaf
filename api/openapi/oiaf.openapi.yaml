@@ -120,6 +120,60 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/challenge/{id}/webauthn/begin:
+    post:
+      tags: [challenge]
+      summary: Begin a WebAuthn assertion ceremony for a challenge
+      description: >
+        Returns the raw WebAuthn assertion options
+        (PublicKeyCredentialRequestOptions) for the browser. Only allowed
+        when the challenge's methods include webauthn. The ceremony session
+        is stored on the challenge until finish.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Assertion options (publicKey object for navigator.credentials.get)
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
+  /v1/challenge/{id}/webauthn/finish:
+    post:
+      tags: [challenge]
+      summary: Finish a WebAuthn assertion ceremony for a challenge
+      description: >
+        Consumes the raw JSON result of navigator.credentials.get(). On
+        success the challenge is approved; attempt accounting matches the
+        other verify methods.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw PublicKeyCredential assertion response
+      responses:
+        "200":
+          description: Challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Challenge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
   /v1/identities:
     get:
       tags: [identities]
@@ -252,6 +306,108 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/identities/{id}/factors/webauthn/registration/begin:
+    post:
+      tags: [identities]
+      summary: Begin a WebAuthn registration ceremony
+      description: >
+        Creates a pending_activation webauthn factor and returns the
+        PublicKeyCredentialCreationOptions (publicKey object) for the
+        browser plus the factor_id.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "201":
+          description: Registration options
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factor_id:
+                    type: string
+                  status:
+                    type: string
+                  publicKey:
+                    type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
+  /v1/identities/{id}/factors/webauthn/registration/{factor_id}/finish:
+    post:
+      tags: [identities]
+      summary: Finish a WebAuthn registration ceremony
+      description: >
+        Consumes the raw JSON result of navigator.credentials.create().
+        On success the factor transitions to active.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - name: factor_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw PublicKeyCredential creation response
+      responses:
+        "200":
+          description: Factor activated
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
+  /v1/identities/{id}/factors/webauthn/verification/begin:
+    post:
+      tags: [identities]
+      summary: Begin an identity-scoped WebAuthn verification ceremony
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Assertion options (publicKey object for navigator.credentials.get)
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
+  /v1/identities/{id}/factors/webauthn/verification/finish:
+    post:
+      tags: [identities]
+      summary: Finish an identity-scoped WebAuthn verification ceremony
+      description: >
+        Consumes the raw JSON result of navigator.credentials.get() against
+        the session parked by the begin endpoint (single use).
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Raw PublicKeyCredential assertion response
+      responses:
+        "200":
+          description: Verification result
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: WebAuthn factor not configured
   /v1/devices:
     get:
       tags: [devices]

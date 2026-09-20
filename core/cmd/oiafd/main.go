@@ -68,7 +68,27 @@ func main() {
 	})
 	totpSvc := mfa.NewTOTPService(store)
 	pushSvc := mfa.NewPushService(store, cfg.Security.PushTimestampSkewSeconds)
-	challengeSvc := challenge.New(store, totpSvc, pushSvc, auditSvc, cfg.Security.ChallengeTTLSeconds, cfg.Security.TOTPMaxAttempts)
+
+	// The WebAuthn factor is optional: without an RP ID + origins in config it
+	// stays disabled (nil) and its endpoints return 503.
+	var webauthnSvc *mfa.WebAuthnService
+	if cfg.WebAuthnEnabled() {
+		svc, err := mfa.NewWebAuthnService(store, mfa.WebAuthnSettings{
+			RPID:          cfg.WebAuthn.RPID,
+			RPDisplayName: cfg.WebAuthn.RPDisplayName,
+			RPOrigins:     cfg.WebAuthnOrigins(),
+		})
+		if err != nil {
+			logger.Error("invalid webauthn configuration; factor disabled", "error", err)
+		} else {
+			webauthnSvc = svc
+			logger.Info("webauthn factor enabled", "rp_id", cfg.WebAuthn.RPID, "origins", cfg.WebAuthnOrigins())
+		}
+	} else {
+		logger.Warn("webauthn factor disabled: set webauthn.rp_id and webauthn.rp_origins (or OIAF_WEBAUTHN_RP_ID/OIAF_WEBAUTHN_RP_ORIGINS) to enable")
+	}
+
+	challengeSvc := challenge.New(store, totpSvc, pushSvc, webauthnSvc, auditSvc, cfg.Security.ChallengeTTLSeconds, cfg.Security.TOTPMaxAttempts)
 
 	discoveryEngine := discovery.NewEngine(store, discovery.DefaultWeights())
 
@@ -93,7 +113,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc, discoveryEngine, inventoryScanner, newBus(cfg, *webhooks, logger))
+	srv := server.New(cfg, store, logger, authSvc, auditSvc, policyEngine, riskEngine, challengeSvc, totpSvc, pushSvc, webauthnSvc, discoveryEngine, inventoryScanner, newBus(cfg, *webhooks, logger))
 
 	runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

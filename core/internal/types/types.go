@@ -211,18 +211,24 @@ type ChallengeInfo struct {
 }
 
 type Challenge struct {
-	ID          string          `json:"id"`
-	IdentityID  string          `json:"identity_id"`
-	RequestID   string          `json:"request_id"`
-	Methods     []MFAMethod     `json:"methods"`
-	Status      ChallengeStatus `json:"status"`
-	PushNumber  int             `json:"push_number,omitempty"`
-	Nonce       string          `json:"-"`
-	Attempts    int             `json:"attempts"`
-	MaxAttempts int             `json:"max_attempts"`
-	ExpiresAt   time.Time       `json:"expires_at"`
-	CreatedAt   time.Time       `json:"created_at"`
-	ResolvedAt  *time.Time      `json:"resolved_at,omitempty"`
+	ID         string          `json:"id"`
+	IdentityID string          `json:"identity_id"`
+	RequestID  string          `json:"request_id"`
+	Methods    []MFAMethod     `json:"methods"`
+	Status     ChallengeStatus `json:"status"`
+	PushNumber int             `json:"push_number,omitempty"`
+	Nonce      string          `json:"-"`
+	// WebAuthnSession holds the JSON-serialized webauthn.SessionData for an
+	// in-flight WebAuthn verification ceremony on this challenge. Like Nonce
+	// it is server-side state and never serialized to API clients. It is set
+	// when verification begins and cleared once the ceremony resolves, which
+	// makes in-progress ceremonies single-use.
+	WebAuthnSession string     `json:"-"`
+	Attempts        int        `json:"attempts"`
+	MaxAttempts     int        `json:"max_attempts"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ResolvedAt      *time.Time `json:"resolved_at,omitempty"`
 }
 
 type Factor struct {
@@ -231,7 +237,13 @@ type Factor struct {
 	Method     MFAMethod    `json:"method"`
 	Status     FactorStatus `json:"status"`
 	Secret     string       `json:"-"`
-	CreatedAt  time.Time    `json:"created_at"`
+	// Credentials holds factor-method-specific credential material as opaque
+	// bytes (for WebAuthn: the JSON-encoded credential record including the
+	// public key, sign counter and clone warning). Like Secret it is
+	// server-side state and never serialized to API clients. A future
+	// PostgresStore maps this to a bytea column.
+	Credentials []byte    `json:"-"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type AuthToken struct {

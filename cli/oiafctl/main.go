@@ -104,6 +104,8 @@ func run() int {
 		return cmdChallenge(opts, cmdArgs)
 	case "totp":
 		return cmdTOTP(opts, cmdArgs)
+	case "webauthn":
+		return cmdWebAuthn(opts, cmdArgs)
 	case "audit":
 		return cmdAudit(opts, cmdArgs)
 	default:
@@ -129,8 +131,14 @@ Commands:
   policy list
   evaluate --file <access_request.json>
   challenge verify <challenge_id> --method totp --code <code>
+  challenge webauthn begin <challenge_id>
+  challenge webauthn finish <challenge_id> --file <assertion_response.json>
   totp generate-secret
   totp code --secret <secret>
+  webauthn register-begin <identity_id>
+  webauthn register-finish <identity_id> <factor_id> --file <creation_response.json>
+  webauthn verify-begin <identity_id>
+  webauthn verify-finish <identity_id> --file <assertion_response.json>
   audit list
   audit verify`)
 }
@@ -417,8 +425,58 @@ func cmdChallenge(opts globalOpts, args []string) int {
 			return 1
 		}
 		return output(opts, resp, formatMap(resp))
+	case "webauthn":
+		return cmdChallengeWebAuthn(opts, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown challenge subcommand: %s\n", args[0])
+		return 1
+	}
+}
+
+// cmdChallengeWebAuthn drives the policy-driven step-up path: begin returns
+// assertion options bound to the challenge, finish consumes the raw
+// navigator.credentials.get() response and resolves the challenge.
+func cmdChallengeWebAuthn(opts globalOpts, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: oiafctl challenge webauthn <begin|finish> <challenge_id> [--file <assertion_response.json>]")
+		return 1
+	}
+
+	switch args[0] {
+	case "begin":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl challenge webauthn begin <challenge_id>")
+			return 1
+		}
+		var resp map[string]interface{}
+		if err := apiCall(opts, "POST", "/v1/challenge/"+args[1]+"/webauthn/begin", nil, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return output(opts, resp, formatMap(resp))
+	case "finish":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl challenge webauthn finish <challenge_id> --file <assertion_response.json>")
+			return 1
+		}
+		fs := flag.NewFlagSet("challenge webauthn finish", flag.ContinueOnError)
+		file := fs.String("file", "", "path to the raw navigator.credentials.get() response JSON")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 1
+		}
+		body, err := readBodyFile(*file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 1
+		}
+		var resp map[string]interface{}
+		if err := apiCallRaw(opts, "POST", "/v1/challenge/"+args[1]+"/webauthn/finish", body, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return output(opts, resp, formatMap(resp))
+	default:
+		fmt.Fprintf(os.Stderr, "unknown challenge webauthn subcommand: %s\n", args[0])
 		return 1
 	}
 }
@@ -470,6 +528,123 @@ func cmdTOTP(opts globalOpts, args []string) int {
 	}
 }
 
+func cmdWebAuthn(opts globalOpts, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: oiafctl webauthn <register-begin|register-finish|verify-begin|verify-finish> ...")
+		return 1
+	}
+
+	switch args[0] {
+	case "register-begin":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl webauthn register-begin <identity_id>")
+			return 1
+		}
+		identityID := args[1]
+		var resp map[string]interface{}
+		if err := apiCall(opts, "POST", "/v1/identities/"+identityID+"/factors/webauthn/registration/begin", map[string]interface{}{}, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		// Print the publicKey options for the browser; the JSON output keeps
+		// everything (factor_id included) for scripting.
+		if opts.output == "json" {
+			return output(opts, resp, "")
+		}
+		if pk, ok := resp["publicKey"]; ok {
+			pkJSON, _ := json.Marshal(pk)
+			fmt.Printf("factor_id: %v\n", resp["factor_id"])
+			fmt.Printf("publicKey: %s\n", pkJSON)
+		}
+		return 0
+	case "register-finish":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl webauthn register-finish <identity_id> <factor_id> --file <creation_response.json>")
+			return 1
+		}
+		identityID, factorID := args[1], args[2]
+		fs := flag.NewFlagSet("webauthn register-finish", flag.ContinueOnError)
+		file := fs.String("file", "", "path to the raw navigator.credentials.create() response JSON")
+		if err := fs.Parse(args[3:]); err != nil {
+			return 1
+		}
+		body, err := readBodyFile(*file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 1
+		}
+		var resp map[string]interface{}
+		if err := apiCallRaw(opts, "POST", "/v1/identities/"+identityID+"/factors/webauthn/registration/"+factorID+"/finish", body, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return output(opts, resp, formatMap(resp))
+	case "verify-begin":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl webauthn verify-begin <identity_id>")
+			return 1
+		}
+		identityID := args[1]
+		var resp map[string]interface{}
+		if err := apiCall(opts, "POST", "/v1/identities/"+identityID+"/factors/webauthn/verification/begin", map[string]interface{}{}, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if opts.output == "json" {
+			return output(opts, resp, "")
+		}
+		if pk, ok := resp["publicKey"]; ok {
+			pkJSON, _ := json.Marshal(pk)
+			fmt.Printf("publicKey: %s\n", pkJSON)
+		}
+		return 0
+	case "verify-finish":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: oiafctl webauthn verify-finish <identity_id> --file <assertion_response.json>")
+			return 1
+		}
+		identityID := args[1]
+		fs := flag.NewFlagSet("webauthn verify-finish", flag.ContinueOnError)
+		file := fs.String("file", "", "path to the raw navigator.credentials.get() response JSON")
+		if err := fs.Parse(args[2:]); err != nil {
+			return 1
+		}
+		body, err := readBodyFile(*file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 1
+		}
+		var resp map[string]interface{}
+		if err := apiCallRaw(opts, "POST", "/v1/identities/"+identityID+"/factors/webauthn/verification/finish", body, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return output(opts, resp, formatMap(resp))
+	default:
+		fmt.Fprintf(os.Stderr, "unknown webauthn subcommand: %s\n", args[0])
+		return 1
+	}
+}
+
+// readBodyFile loads a raw request body from a file path; "-" reads stdin.
+func readBodyFile(path string) ([]byte, error) {
+	if path == "" {
+		return nil, fmt.Errorf("--file is required (use - for stdin)")
+	}
+	if path == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read stdin: %w", err)
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	return data, nil
+}
+
 func cmdAudit(opts globalOpts, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: oiafctl audit <list|verify>")
@@ -498,8 +673,6 @@ func cmdAudit(opts globalOpts, args []string) int {
 }
 
 func apiCall(opts globalOpts, method, path string, body interface{}, result interface{}) error {
-	url := strings.TrimRight(opts.server, "/") + path
-
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -508,6 +681,18 @@ func apiCall(opts globalOpts, method, path string, body interface{}, result inte
 		}
 		reqBody = bytes.NewReader(data)
 	}
+	return apiDo(opts, method, path, reqBody, result)
+}
+
+// apiCallRaw posts a pre-serialized raw body. The WebAuthn finish endpoints
+// consume the browser's authenticator response verbatim, so the CLI must not
+// re-wrap it in another JSON envelope.
+func apiCallRaw(opts globalOpts, method, path string, raw []byte, result interface{}) error {
+	return apiDo(opts, method, path, bytes.NewReader(raw), result)
+}
+
+func apiDo(opts globalOpts, method, path string, reqBody io.Reader, result interface{}) error {
+	url := strings.TrimRight(opts.server, "/") + path
 
 	req, err := http.NewRequest(method, url, reqBody)
 	if err != nil {

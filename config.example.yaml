@@ -14,6 +14,15 @@ security:
   push_timestamp_skew_seconds: 60
   require_secure_cookies: true
 
+# WebAuthn (FIDO2/passkey) MFA factor. rp_id is the effective domain (no
+# scheme or port); rp_origins is a comma-separated allowlist of browser
+# origins. Env overrides: OIAF_WEBAUTHN_RP_ID, OIAF_WEBAUTHN_RP_ORIGINS,
+# OIAF_WEBAUTHN_RP_DISPLAY_NAME. Clear rp_id to disable the factor.
+webauthn:
+  rp_id: localhost
+  rp_display_name: OIAF
+  rp_origins: http://localhost:8080
+
 policy:
   default_effect: deny
 
