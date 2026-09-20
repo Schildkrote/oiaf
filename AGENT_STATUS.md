@@ -117,12 +117,15 @@ make verify       # fmt + vet + test + e2e
   paths are unexercised. Treat as experimental until validated against real
   hardware. Negative coverage exists for cross-user credential scoping,
   assertion replay, wrong user handle and ceremony expiry.
-- Adapters: RADIUS/LDAP/Okta/Entra/Duo/webhook are skeletons/prototypes,
+- Adapters: RADIUS/LDAP/Entra/Duo/webhook are skeletons/prototypes,
   not production-ready. The **PAM adapter is implemented and packaged**
   (evaluate + TOTP challenge + fail-closed, unit + e2e tested; `make
   install-pam` / `make install-server` + `deploy/systemd/`), but is **not
   yet field-tested behind a real PAM stack** — run
-  `adapters/pam/oiaf-pam-field-test.sh` on a Linux VM first.
+  `adapters/pam/oiaf-pam-field-test.sh` on a Linux VM first. The **Okta
+  adapter is implemented** (read-only System Log ingestion + risk signals via
+  the evaluate callback, stateful cursor, offline fixture/httptest tests) but
+  is not yet proven against a live Okta tenant.
 - Metrics: /metrics returns placeholder (Prometheus integration pending)
 - OPA policy engine: returns not implemented
 - No Docker build verified (Docker may not be available)

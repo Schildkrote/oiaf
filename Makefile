@@ -11,10 +11,11 @@ dev: ## Run the server locally
 
 run: dev ## Same as dev
 
-build: ## Build oiafd, oiafctl, and oiaf-pam-helper to bin/
+build: ## Build oiafd, oiafctl, oiaf-pam-helper, and oiaf-okta-adapter to bin/
 	go build -o bin/oiafd ./core/cmd/oiafd
 	go build -o bin/oiafctl ./cli/oiafctl
 	go build -o bin/oiaf-pam-helper ./adapters/pam/oiaf-pam-helper
+	go build -o bin/oiaf-okta-adapter ./adapters/okta
 
 install: ## Install all packages
 	go install ./...

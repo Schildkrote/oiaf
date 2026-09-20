@@ -1,6 +1,8 @@
 # Okta Adapter
 
-**Status: Planned**
+**Status: Implemented (read-only log ingestion + risk signals), not yet proven
+against a live Okta tenant.** See `adapters/okta/README.md` for configuration,
+signal mapping and the offline fixture mode.
 
 The Okta adapter ingests Okta sign-in and system logs to enrich risk scoring
 and detect identity threats.
@@ -29,4 +31,8 @@ and detect identity threats.
 - Use a stateful cursor to avoid reprocessing or gaps.
 - Respect Okta rate limits; paginate and back off.
 - This adapter is read-only (signals in); it does not enforce decisions in Okta.
-- This adapter is planned and not yet implemented.
+- The adapter polls the System Log API, detects the signals above and feeds
+  them to OIAF core via the standard adapter evaluate callback
+  (`POST /v1/access/evaluate`). It is covered by offline unit tests
+  (httptest + fixtures); it has not yet been validated against a live Okta
+  tenant.

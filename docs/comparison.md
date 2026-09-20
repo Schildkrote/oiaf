@@ -78,7 +78,7 @@ capability is real, functional, in progress, or only designed, the tables say so
 ## Honest bottom line
 
 - **What is genuinely usable now (in dev/test):** the decision API, rule-based risk engine, TOTP/push factors, the Linux PAM helper with its packaging and field-test script, the read-only AD inventory scanner, and the hash-chained audit design.
-- **What is not:** WebAuthn (in progress), the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only), identity graph analytics (roadmap), and every cloud-IdP adapter — Okta, Entra ID, and Duo adapters are design-stage skeletons that exit with an error.
+- **What is not:** WebAuthn (in progress), the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only), identity graph analytics (roadmap), and the remaining cloud-IdP adapters — Entra ID and Duo are design-stage skeletons that exit with an error. The Okta adapter is implemented (read-only System Log ingestion + risk signals, offline-tested) but has not been validated against a live tenant.
 - **What OIAF will realistically replace for you today:** nothing in production. It is a foundation you can audit, extend, and experiment with — AGPL-licensed, with an architecture that targets the same problem space as the vendors above.
 
 If you evaluate OIAF against a commercial product, treat this page as the claim
