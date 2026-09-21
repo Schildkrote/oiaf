@@ -93,7 +93,50 @@ type SecurityCtx struct {
 }
 
 type DebugCtx struct {
-	DebugData map[string]string `json:"debugData"`
+	// DebugData is Okta's free-form debug blob. Its values are NOT reliably
+	// strings: real tenants return numbers, booleans, nulls and nested objects
+	// here. A plain map[string]string would fail to decode such an event, which
+	// fails the ENTIRE PAGE decode, which is retried 5x, which wedges the poll
+	// loop on one odd event — a silent, permanent stall. DebugDataMap accepts
+	// any JSON value and stringifies it, so decoding can never fail here while
+	// consumers keep seeing plain strings.
+	DebugData DebugDataMap `json:"debugData"`
+}
+
+// DebugDataMap decodes Okta's debugData as map[string]string without ever
+// failing on a non-string value. Strings keep their exact value; everything
+// else is rendered with its compact JSON form (so a number 42 stays "42", a
+// bool stays "true", an object stays {"a":1}).
+type DebugDataMap map[string]string
+
+func (m *DebugDataMap) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Not an object at all: ignore rather than fail the page. debugData is
+		// advisory signal input, never load-bearing for correctness.
+		*m = nil
+		return nil
+	}
+	out := make(DebugDataMap, len(raw))
+	for k, v := range raw {
+		if v == nil || string(v) == "null" {
+			out[k] = ""
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			out[k] = s
+			continue
+		}
+		// Numbers, booleans, arrays, objects: keep the compact JSON text so the
+		// substring matching in isLegacyAuth still works on it.
+		out[k] = string(v)
+	}
+	*m = out
+	return nil
 }
 
 type Target struct {

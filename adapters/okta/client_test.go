@@ -76,19 +76,34 @@ func TestFetchLogsPagination(t *testing.T) {
 // TestFetchLogsMaxPages verifies the page cap returns partial results with
 // ErrTooManyPages so the poller can checkpoint instead of looping forever.
 func TestFetchLogsMaxPages(t *testing.T) {
+	// The server always advertises a next page, so the ONLY thing that can stop
+	// the loop is the MaxPages cap. Two guards make a removed cap fail fast
+	// instead of hanging CI until the job times out:
+	//   1. a context deadline, so FetchLogs returns an error rather than looping
+	//   2. a request counter asserted against MaxPages, which proves the CAP
+	//      stopped the loop and not the deadline
+	var requests int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
 		w.Header().Set("Link", "<http://"+r.Host+`/api/v1/logs?after=x>; rel="next"`)
 		json.NewEncoder(w).Encode([]LogEvent{mustEvent(t, "e1", "user.session.start", time.Now())})
 	}))
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token", 5*time.Second)
-	events, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 1, MaxPages: 2})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	events, err := c.FetchLogs(ctx, FetchLogsParams{Limit: 1, MaxPages: 2})
 	if !errors.Is(err, ErrTooManyPages) {
-		t.Fatalf("expected ErrTooManyPages, got %v", err)
+		t.Fatalf("expected ErrTooManyPages, got %v (the MaxPages cap did not stop the loop)", err)
 	}
 	if len(events) != 2 {
 		t.Fatalf("expected 2 partial events, got %d", len(events))
+	}
+	// Exactly MaxPages fetches: the cap, not the deadline, terminated the loop.
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Errorf("expected exactly 2 page fetches (MaxPages), got %d — the cap is not bounding the loop", got)
 	}
 }
 
@@ -372,5 +387,74 @@ func TestValidateNextURL_LoopbackHTTPAllowedOnlyForLoopbackTenant(t *testing.T) 
 	remote := &Client{baseURL: "https://tenant-1.okta.com"}
 	if _, err := remote.validateNextURL("http://127.0.0.1:9999/api/v1/logs"); err == nil {
 		t.Error("loopback http must be rejected when the tenant is a remote https host")
+	}
+}
+
+// --- debugData robustness ---------------------------------------------------
+// Okta's debugContext.debugData is free-form. With a plain map[string]string a
+// single non-string value failed the ENTIRE page decode, which was retried 5x
+// and wedged the poll loop permanently — a silent stall caused by one odd
+// event. These tests pin the tolerant decoding.
+
+func TestDebugData_ToleratesNonStringValues(t *testing.T) {
+	// A page mixing every JSON value type in debugData must decode fully.
+	page := `[
+		{"uuid":"u1","published":"2026-09-20T12:00:00Z","eventType":"user.session.start",
+		 "debugContext":{"debugData":{"requestUri":"/imap/mailbox"}}},
+		{"uuid":"u2","published":"2026-09-20T12:01:00Z","eventType":"user.session.start",
+		 "debugContext":{"debugData":{"count":42,"enabled":true,"missing":null,"nested":{"a":1},"list":[1,2]}}},
+		{"uuid":"u3","published":"2026-09-20T12:02:00Z","eventType":"user.session.start",
+		 "debugContext":{"debugData":null}},
+		{"uuid":"u4","published":"2026-09-20T12:03:00Z","eventType":"user.session.start"}
+	]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, page)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token", 5*time.Second)
+	events, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 2})
+	if err != nil {
+		t.Fatalf("a non-string debugData value must not fail the page decode, got %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("expected all 4 events decoded, got %d", len(events))
+	}
+
+	// Strings keep their exact value (load-bearing for isLegacyAuth matching).
+	if got := events[0].Context.DebugData["requestUri"]; got != "/imap/mailbox" {
+		t.Errorf("string value mangled: got %q", got)
+	}
+	// Non-strings become their compact JSON text, so substring matching still works.
+	got := events[1].Context.DebugData
+	if got["count"] != "42" {
+		t.Errorf("number not stringified: got %q", got["count"])
+	}
+	if got["enabled"] != "true" {
+		t.Errorf("bool not stringified: got %q", got["enabled"])
+	}
+	if got["missing"] != "" {
+		t.Errorf("null should become empty string: got %q", got["missing"])
+	}
+	if !strings.Contains(got["nested"], `"a"`) {
+		t.Errorf("nested object not preserved as JSON text: got %q", got["nested"])
+	}
+	if !strings.Contains(got["list"], "1") {
+		t.Errorf("array not preserved as JSON text: got %q", got["list"])
+	}
+}
+
+func TestDebugData_LegacyAuthStillDetectsAcrossValueTypes(t *testing.T) {
+	// The whole reason debugData is decoded: isLegacyAuth substring-matches it.
+	// A non-string value carrying "/imap" must still be detected rather than
+	// silently lost.
+	raw := []byte(`{"debugContext":{"debugData":{"proxy":{"url":"/imap/inbox"}}}}`)
+	var ev LogEvent
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !isLegacyAuth(&ev) {
+		t.Error("isLegacyAuth missed an /imap URL nested inside a non-string debugData value")
 	}
 }

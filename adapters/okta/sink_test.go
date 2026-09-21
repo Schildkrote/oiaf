@@ -91,8 +91,16 @@ func TestEvaluateSinkCoreError(t *testing.T) {
 	}
 }
 
-// TestLogSinkNeverLeaksToken is a smoke check that the offline fallback sink
-// emits structured logs without any credential material.
+// TestLogSinkWrites verifies the offline fallback sink emits structured logs
+// containing the signal data.
+//
+// NOTE: this test used to sit under a comment claiming it proved the sink
+// "never leaks a token". It never did — it only asserted that fields were
+// PRESENT, never that a secret was ABSENT. Independent review caught that a
+// token injected into an error path left the whole suite green. The real
+// negative coverage now lives in leak_test.go (TestNoTokenLeak_*), which
+// captures slog, stdout, stderr, the returned error and the state file and
+// asserts canary secrets appear in none of them.
 func TestLogSinkWrites(t *testing.T) {
 	var buf strings.Builder
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
