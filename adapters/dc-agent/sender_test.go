@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -162,5 +163,170 @@ func TestNewSenderTrimsTrailingSlash(t *testing.T) {
 	}
 	if !strings.HasPrefix(s.baseURL, "http") || strings.HasSuffix(s.baseURL, "/") {
 		t.Errorf("baseURL should be trimmed of its trailing slash, got %q", s.baseURL)
+	}
+}
+
+// --- Flush rejection must be observable (closes mutation (c)) ----------------
+//
+// The leak tests above all use discard() loggers, so nothing observes what Flush
+// does with a rejected batch. Independent review dropped the isNotSuccess gate
+// from Flush and the WHOLE suite stayed green: a refused-redirect 302 would
+// re-create the original silent AD-event loss, and an attacker-controlled 4xx
+// body would be decoded and logged as fake "baseline deviation" warnings.
+// These tests record log output so that mutation is caught.
+
+// recordingHandler captures slog records so a test can assert on what was
+// logged — the discard() logger cannot, which is precisely the blind spot.
+type recordingHandler struct {
+	mu       sync.Mutex
+	records  []string
+	attrs    map[string][]string
+	levelMin slog.Level
+}
+
+func newRecordingHandler() *recordingHandler {
+	return &recordingHandler{attrs: map[string][]string{}, levelMin: slog.LevelDebug}
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler            { return h }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Message)
+	r.Attrs(func(a slog.Attr) bool {
+		h.attrs[a.Key] = append(h.attrs[a.Key], a.Value.String())
+		return true
+	})
+	return nil
+}
+
+// messages returns a snapshot of every logged message.
+func (h *recordingHandler) messages() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, len(h.records))
+	copy(out, h.records)
+	return out
+}
+
+// values returns every value logged under a given key.
+func (h *recordingHandler) values(key string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, len(h.attrs[key]))
+	copy(out, h.attrs[key])
+	return out
+}
+
+func (h *recordingHandler) logged(msg string) bool {
+	for _, m := range h.messages() {
+		if m == msg {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSenderFlush_RejectedBatchIsLoggedAndNotDecoded(t *testing.T) {
+	// A hostile core returns 502 whose body carries crafted decisions. If Flush
+	// decoded it anyway, those decisions would be logged as genuine baseline
+	// deviations — fabricated security signal. The gate must prevent that.
+	hostile := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"accepted":2,"decisions":[
+			{"account_sid":"S-FAKE","account_name":"attacker","decision":"challenge","risk_score":99},
+			{"account_sid":"S-FAKE2","account_name":"attacker2","decision":"deny","risk_score":100}]}`))
+	}))
+	defer hostile.Close()
+
+	h := newRecordingHandler()
+	s := NewSender(hostile.URL, "tok", 10, time.Second, slog.New(h))
+	s.Flush(context.Background(), []EventRecord{{AccountSID: "S-1"}})
+
+	// (i) the rejection is actually logged, with the status
+	if !h.logged("server rejected batch") {
+		t.Errorf("Flush did not log 'server rejected batch'; recorded messages: %v", h.messages())
+	}
+	if got := h.values("status"); len(got) == 0 || got[0] != "502" {
+		t.Errorf("rejection log should carry status 502, got %v", got)
+	}
+
+	// (ii) NOT ONE fabricated decision may be logged
+	for _, m := range h.messages() {
+		if m == "baseline deviation detected" {
+			t.Errorf("SECURITY: Flush decoded an error body and logged fabricated decisions: %v", h.messages())
+		}
+	}
+	for _, v := range h.values("account") {
+		if strings.Contains(v, "attacker") {
+			t.Errorf("SECURITY: attacker-controlled account name reached the logs: %v", h.values("account"))
+		}
+	}
+}
+
+func TestSenderFlush_RefusedRedirectIsRejectedNotDecoded(t *testing.T) {
+	// The exact scenario mutation (c) exposed: with redirects refused, a 302
+	// arrives with an empty body. The old >=400 gate treated that as SUCCESS,
+	// decode failed silently, and the AD events vanished with only a Debug log.
+	var hits int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"accepted":1,"decisions":[]}`))
+	}))
+	defer target.Close()
+
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+r.URL.Path)
+		w.WriteHeader(http.StatusFound) // 302, empty body
+	}))
+	defer core.Close()
+
+	h := newRecordingHandler()
+	s := NewSender(core.URL, "tok", 10, time.Second, slog.New(h))
+	s.Flush(context.Background(), []EventRecord{{AccountSID: "S-1"}, {AccountSID: "S-2"}})
+
+	if got := atomic.LoadInt32(&hits); got != 0 {
+		t.Errorf("SECURITY: the redirect was followed %d time(s)", got)
+	}
+	// The batch must be visibly rejected, not silently swallowed.
+	if !h.logged("server rejected batch") {
+		t.Errorf("a refused 302 must be logged as a rejection, otherwise %d AD events are lost silently; recorded: %v", 2, h.messages())
+	}
+	if got := h.values("status"); len(got) == 0 || got[0] != "302" {
+		t.Errorf("rejection log should carry status 302, got %v", got)
+	}
+	if got := h.values("count"); len(got) == 0 || got[0] != "2" {
+		t.Errorf("rejection log should report the number of dropped events, got %v", got)
+	}
+}
+
+func TestSenderFlush_AcceptsValidDecisions(t *testing.T) {
+	// Positive control: the gate must not suppress legitimate decisions, or the
+	// two tests above could pass by breaking Flush entirely.
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"accepted":1,"decisions":[{"account_sid":"S-1","account_name":"corp","decision":"challenge","risk_score":77}]}`))
+	}))
+	defer core.Close()
+
+	h := newRecordingHandler()
+	s := NewSender(core.URL, "tok", 10, time.Second, slog.New(h))
+	s.Flush(context.Background(), []EventRecord{{AccountSID: "S-1"}})
+
+	if !h.logged("baseline deviation detected") {
+		t.Errorf("POSITIVE CONTROL FAILED: a valid 200 decision was not logged, so the rejection tests above prove nothing; recorded: %v", h.messages())
+	}
+	if h.logged("server rejected batch") {
+		t.Errorf("a valid 200 batch must not be logged as rejected; recorded: %v", h.messages())
+	}
+	if got := h.values("risk_score"); len(got) == 0 || got[0] != "77" {
+		t.Errorf("decision detail not logged, got %v", got)
 	}
 }

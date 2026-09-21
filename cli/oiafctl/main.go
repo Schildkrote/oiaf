@@ -691,6 +691,13 @@ func apiCallRaw(opts globalOpts, method, path string, raw []byte, result interfa
 	return apiDo(opts, method, path, bytes.NewReader(raw), result)
 }
 
+// isNotSuccess reports whether a status code is anything other than 2xx.
+// 3xx counts as failure: apiDo refuses redirects (see the client below), so a
+// 3xx means the request was NOT carried out by the server. The previous
+// `>= 400` gate treated a refused 302 as success and handed the caller an empty
+// parsed result — for an admin CLI that is a silent no-op reported as success.
+func isNotSuccess(status int) bool { return status < 200 || status >= 300 }
+
 func apiDo(opts globalOpts, method, path string, reqBody io.Reader, result interface{}) error {
 	url := strings.TrimRight(opts.server, "/") + path
 
@@ -725,7 +732,7 @@ func apiDo(opts globalOpts, method, path string, reqBody io.Reader, result inter
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode >= 400 {
+	if isNotSuccess(resp.StatusCode) {
 		var errResp map[string]string
 		if json.Unmarshal(respData, &errResp) == nil {
 			if msg, ok := errResp["error"]; ok {

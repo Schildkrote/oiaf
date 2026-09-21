@@ -171,6 +171,13 @@ func cmdApprovePush(args []string) int {
 	return 0
 }
 
+// isNotSuccess reports whether a status code is anything other than 2xx.
+// 3xx counts as failure: apiCall refuses redirects (see the client below), so a
+// 3xx means the request was NOT carried out by the server. The previous
+// `>= 400` gate treated a refused 302 as success and returned an empty result
+// map, which the caller would report as a successful push approval.
+func isNotSuccess(status int) bool { return status < 200 || status >= 300 }
+
 func apiCall(server, token, method, path string, body interface{}) (map[string]interface{}, error) {
 	url := strings.TrimRight(server, "/") + path
 
@@ -211,7 +218,7 @@ func apiCall(server, token, method, path string, body interface{}) (map[string]i
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode >= 400 {
+	if isNotSuccess(resp.StatusCode) {
 		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, string(respData))
 	}
 

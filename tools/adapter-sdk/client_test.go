@@ -21,8 +21,16 @@ import (
 // net/http follows 3xx transparently. Go strips Authorization only when the
 // redirect changes the HOSTNAME — and it compares hostnames with the port
 // stripped — so a 302 to the same hostname on a different port carried the
-// bearer token to whatever was listening. That credential is shared by every
-// sdk consumer (adapters/pam, adapters/okta, adapters/dc-agent).
+// bearer token to whatever was listening.
+//
+// SCOPE: exactly ONE file imports this SDK — adapters/pam/oiaf-pam-helper/
+// main.go (verify with: grep -rln 'Schildkrote/oiaf/tools/adapter-sdk').
+// adapters/dc-agent does NOT import it; it carries its own http.Client with the
+// identical bug, fixed separately in adapters/dc-agent/sender.go and covered by
+// its own sender_test.go. adapters/okta on main is a stub whose real client
+// lives on the feat/okta-adapter branch and pins redirects itself.
+// An earlier revision of this comment claimed all three consumed the SDK. That
+// was false, and believing it is exactly how the dc-agent leak was missed.
 //
 // Reproduced before the fix with a throwaway probe:
 //   target hits=1   target saw Authorization="Bearer PROBE-BEARER-SECRET"
