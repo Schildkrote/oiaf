@@ -4,6 +4,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +58,13 @@ type WebAuthnConfig struct {
 	RPID          string `yaml:"rp_id"`
 	RPDisplayName string `yaml:"rp_display_name"`
 	RPOrigins     string `yaml:"rp_origins"`
+	// RequireUserVerification makes user verification (PIN / biometric / touch
+	// with presence) mandatory: ceremonies where the authenticator did not set
+	// the userVerified flag are rejected. The default (false) maps to the
+	// WebAuthn "preferred" hint, which asks for UV but accepts an
+	// authenticator that skipped it. Set true when UV must be enforced
+	// server-side rather than merely requested.
+	RequireUserVerification bool `yaml:"require_user_verification"`
 }
 
 type PolicyConfig struct {
@@ -125,12 +133,17 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	applyEnv(cfg)
+	if err := applyEnv(cfg); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-func applyEnv(cfg *Config) {
+// applyEnv overlays OIAF_* environment variables onto the loaded config. It
+// returns an error only when a value is present but unparseable, so a typo in a
+// security-relevant switch fails startup instead of silently downgrading.
+func applyEnv(cfg *Config) error {
 	if v, ok := os.LookupEnv("OIAF_LISTEN_ADDR"); ok {
 		cfg.Server.Addr = v
 	}
@@ -185,6 +198,16 @@ func applyEnv(cfg *Config) {
 	if v, ok := os.LookupEnv("OIAF_WEBAUTHN_RP_ORIGINS"); ok {
 		cfg.WebAuthn.RPOrigins = v
 	}
+	if v, ok := os.LookupEnv("OIAF_WEBAUTHN_REQUIRE_USER_VERIFICATION"); ok {
+		// Fail loud on a typo: silently falling back to "preferred" would leave
+		// an operator believing UV is enforced when it is not.
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("OIAF_WEBAUTHN_REQUIRE_USER_VERIFICATION must be a boolean (true/false), got %q: %w", v, err)
+		}
+		cfg.WebAuthn.RequireUserVerification = b
+	}
+	return nil
 }
 
 // WebAuthnOrigins splits the comma-separated RPOrigins config into a slice,

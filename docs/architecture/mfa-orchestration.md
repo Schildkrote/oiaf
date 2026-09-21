@@ -9,7 +9,7 @@ expiry, and attempt limiting.
 |--------|--------|-------------|
 | TOTP | Active | RFC 6238, SHA-1, 6 digits, 30s period |
 | Push | Active | HMAC-SHA256 signed approval with number matching |
-| WebAuthn | Active | FIDO2 / passkey, phishing-resistant (ES256+ via go-webauthn) |
+| WebAuthn | Implemented, unproven on real hardware | FIDO2 / passkey, phishing-resistant (ES256+ via go-webauthn). Tested against a software authenticator only — see the caveat in [WebAuthn](#webauthn). |
 | Email | Planned | OTP via email |
 | SMS | Planned | OTP via SMS (low security, last resort) |
 
@@ -46,6 +46,17 @@ expiry, and attempt limiting.
 
 ## WebAuthn
 
+> **Verification status — read before relying on this factor.**
+> The WebAuthn factor is implemented and unit-tested against a **software test
+> authenticator** (`core/internal/webauthntest`) performing real ES256
+> ceremonies: attestation objects, CBOR encoding and genuine signatures. It has
+> **not** been proven against a real browser passkey or a hardware security key
+> (e.g. YubiKey), including platform authenticators, resident/discoverable
+> credentials, roaming-credential quirks and the `largeBlob`/`hmac-secret`
+> extension paths. Treat it as **experimental** and validate against your own
+> authenticator fleet before production use. Cross-user credential scoping,
+> assertion replay and ceremony expiry are covered by negative tests.
+
 WebAuthn provides phishing-resistant MFA using platform or roaming
 authenticators (passkeys, security keys). It is implemented via the
 `github.com/go-webauthn/webauthn` library and follows the same
@@ -78,9 +89,17 @@ challenge/response ceremonies.
   sessions ride on the pending factor (registration) or on the challenge
   (`WebAuthnSession`, verification), so no new storage interface is needed
   and the PostgresStore skeleton stays compatible (credentials → bytea).
-- Attestation: `none` conveyance preference (low-friction MFA); user
-  verification is `preferred`. The sign counter is persisted per assertion to
-  support clone detection.
+- Attestation: `none` conveyance preference (low-friction MFA). The sign counter
+  is persisted per assertion to support clone detection.
+- User verification: `webauthn.require_user_verification` selects `preferred`
+  (default — the authenticator is asked for UV but the ceremony still succeeds
+  without it) or `required` (the ceremony fails unless the user-verified flag is
+  set). Set `required` if you need UV to be *enforced* server-side rather than
+  merely requested; with `preferred` an authenticator that skips UV is accepted.
+- Ceremony expiry: registration ceremonies expire server-side after the same TTL
+  as verification sessions (5 minutes), so an abandoned `pending_activation`
+  factor cannot be finished indefinitely. Expired ceremonies are rejected and the
+  factor stays pending.
 
 ## Method Preference
 

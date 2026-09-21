@@ -74,15 +74,16 @@ func main() {
 	var webauthnSvc *mfa.WebAuthnService
 	if cfg.WebAuthnEnabled() {
 		svc, err := mfa.NewWebAuthnService(store, mfa.WebAuthnSettings{
-			RPID:          cfg.WebAuthn.RPID,
-			RPDisplayName: cfg.WebAuthn.RPDisplayName,
-			RPOrigins:     cfg.WebAuthnOrigins(),
+			RPID:                    cfg.WebAuthn.RPID,
+			RPDisplayName:           cfg.WebAuthn.RPDisplayName,
+			RPOrigins:               cfg.WebAuthnOrigins(),
+			RequireUserVerification: cfg.WebAuthn.RequireUserVerification,
 		})
 		if err != nil {
 			logger.Error("invalid webauthn configuration; factor disabled", "error", err)
 		} else {
 			webauthnSvc = svc
-			logger.Info("webauthn factor enabled", "rp_id", cfg.WebAuthn.RPID, "origins", cfg.WebAuthnOrigins())
+			logger.Info("webauthn factor enabled", "rp_id", cfg.WebAuthn.RPID, "origins", cfg.WebAuthnOrigins(), "require_user_verification", cfg.WebAuthn.RequireUserVerification)
 		}
 	} else {
 		logger.Warn("webauthn factor disabled: set webauthn.rp_id and webauthn.rp_origins (or OIAF_WEBAUTHN_RP_ID/OIAF_WEBAUTHN_RP_ORIGINS) to enable")

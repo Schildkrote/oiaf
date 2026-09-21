@@ -36,6 +36,14 @@ type Authenticator struct {
 	CredID  []byte
 	AAGUID  []byte
 	Counter uint32
+
+	// NoUserVerified makes the authenticator omit the UV flag from its
+	// authenticator data, emulating a device that performed only user-presence
+	// (touch) without PIN/biometric verification. Use it to test that a
+	// server configured with userVerification=required rejects such a
+	// ceremony. Defaults to false (UV is reported), so existing fixtures are
+	// unaffected.
+	NoUserVerified bool
 }
 
 // NewAuthenticator creates a fresh software authenticator with a random
@@ -145,12 +153,12 @@ func (a *Authenticator) AssertionResponse(challenge, origin, rpID string, userHa
 }
 
 // registrationAuthData builds authenticator data for a registration ceremony:
-// rpIdHash || flags (UP|AT) || counter || aaguid || credIDLen || credID || COSE key.
+// rpIdHash || flags (UP|AT[|UV]) || counter || aaguid || credIDLen || credID || COSE key.
 func (a *Authenticator) registrationAuthData(rpID string, counter uint32) []byte {
 	rpIDHash := sha256.Sum256([]byte(rpID))
 	buf := make([]byte, 0, 37+16+2+len(a.CredID)+len(a.COSEPublicKey()))
 	buf = append(buf, rpIDHash[:]...)
-	buf = append(buf, 0x41) // flags: user present + attested credential data
+	buf = append(buf, a.registrationFlags())
 	buf = binary.BigEndian.AppendUint32(buf, counter)
 	buf = append(buf, a.AAGUID...)
 	buf = binary.BigEndian.AppendUint16(buf, uint16(len(a.CredID)))
@@ -160,14 +168,44 @@ func (a *Authenticator) registrationAuthData(rpID string, counter uint32) []byte
 }
 
 // assertionAuthData builds the 37-byte authenticator data for an assertion:
-// rpIdHash || flags (UP|UV) || counter.
+// rpIdHash || flags || counter. Flags are UP|UV (0x05), or UP alone (0x01) when
+// NoUserVerified is set.
 func (a *Authenticator) assertionAuthData(rpID string) []byte {
 	rpIDHash := sha256.Sum256([]byte(rpID))
 	buf := make([]byte, 0, 37)
 	buf = append(buf, rpIDHash[:]...)
-	buf = append(buf, 0x05) // flags: user present + user verified
+	buf = append(buf, a.assertionFlags())
 	buf = binary.BigEndian.AppendUint32(buf, a.Counter)
 	return buf
+}
+
+// assertionFlags returns the authenticator flags byte for an assertion:
+// user present (0x01) always, user verified (0x04) unless NoUserVerified.
+func (a *Authenticator) assertionFlags() byte {
+	const (
+		flagUserPresent  byte = 0x01
+		flagUserVerified byte = 0x04
+	)
+	if a.NoUserVerified {
+		return flagUserPresent
+	}
+	return flagUserPresent | flagUserVerified
+}
+
+// registrationFlags returns the authenticator flags byte for a registration:
+// user present + attested credential data (0x41), plus user verified (0x04)
+// unless NoUserVerified.
+func (a *Authenticator) registrationFlags() byte {
+	const (
+		flagUserPresent      byte = 0x01
+		flagUserVerified     byte = 0x04
+		flagAttestedCredData byte = 0x40
+	)
+	flags := flagUserPresent | flagAttestedCredData
+	if !a.NoUserVerified {
+		flags |= flagUserVerified
+	}
+	return flags
 }
 
 func padded32(n *big.Int) []byte {

@@ -106,15 +106,23 @@ make verify       # fmt + vet + test + e2e
 
 - Storage: only MemoryStore is functional; PostgresStore is a documented skeleton
 - MFA: TOTP, push simulator, and WebAuthn (registration + assertion via
-  go-webauthn, unit-tested with real ES256 ceremonies) are functional;
-  email/SMS are skeletons. WebAuthn requires `webauthn.rp_id` +
-  `webauthn.rp_origins` config (localhost defaults for dev); identity-scoped
-  verification sessions are in-memory, the challenge-orchestrated path is
-  store-backed
+  go-webauthn) are functional; email/SMS are skeletons. WebAuthn requires
+  `webauthn.rp_id` + `webauthn.rp_origins` config (localhost defaults for dev);
+  identity-scoped verification sessions are in-memory, the
+  challenge-orchestrated path is store-backed
+- **WebAuthn verification status:** tested only against a software test
+  authenticator (`core/internal/webauthntest`, real ES256 ceremonies). **Not
+  yet proven against a real browser passkey or a hardware security key** —
+  platform authenticators, resident/discoverable credentials and extension
+  paths are unexercised. Treat as experimental until validated against real
+  hardware. Negative coverage exists for cross-user credential scoping,
+  assertion replay, wrong user handle and ceremony expiry.
 - Adapters: RADIUS/LDAP/Okta/Entra/Duo/webhook are skeletons/prototypes,
-  not production-ready. The **PAM adapter is implemented** (evaluate +
-  TOTP challenge + fail-closed, unit + e2e tested) but not packaged, and is
-  not field-tested behind a real PAM stack.
+  not production-ready. The **PAM adapter is implemented and packaged**
+  (evaluate + TOTP challenge + fail-closed, unit + e2e tested; `make
+  install-pam` / `make install-server` + `deploy/systemd/`), but is **not
+  yet field-tested behind a real PAM stack** — run
+  `adapters/pam/oiaf-pam-field-test.sh` on a Linux VM first.
 - Metrics: /metrics returns placeholder (Prometheus integration pending)
 - OPA policy engine: returns not implemented
 - No Docker build verified (Docker may not be available)

@@ -36,6 +36,11 @@ type WebAuthnSettings struct {
 	RPID          string
 	RPDisplayName string
 	RPOrigins     []string
+	// RequireUserVerification selects protocol.VerificationRequired (true) over
+	// protocol.VerificationPreferred (false, the default). With "preferred" the
+	// authenticator is asked for UV but a ceremony that skipped it still
+	// succeeds, so UV is requested rather than enforced.
+	RequireUserVerification bool
 }
 
 // WebAuthnService implements the WebAuthn (FIDO2/passkey) MFA factor,
@@ -85,15 +90,25 @@ const sessionTTL = 5 * time.Minute
 // NewWebAuthnService creates the WebAuthn factor service. It fails fast if
 // the Relying Party settings are invalid (e.g. no origins configured).
 func NewWebAuthnService(store storage.Store, settings WebAuthnSettings) (*WebAuthnService, error) {
+	// userVerification drives both ceremonies: it is advertised in the creation
+	// and assertion options, and the library rejects an assertion whose
+	// authenticator data lacks the UV flag when it is "required". The default
+	// stays "preferred" so existing deployments keep their behaviour;
+	// RequireUserVerification upgrades it to server-side enforcement.
+	userVerification := protocol.VerificationPreferred
+	if settings.RequireUserVerification {
+		userVerification = protocol.VerificationRequired
+	}
+
 	lib, err := webauthn.New(&webauthn.Config{
 		RPID:          settings.RPID,
 		RPDisplayName: settings.RPDisplayName,
 		RPOrigins:     settings.RPOrigins,
 		// MFA-style ceremonies: no attestation needed (keeps registration
-		// friction low) and user verification preferred for assertions.
+		// friction low).
 		AttestationPreference: protocol.PreferNoAttestation,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
-			UserVerification: protocol.VerificationPreferred,
+			UserVerification: userVerification,
 		},
 	})
 	if err != nil {
@@ -151,6 +166,14 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, identityID str
 	}
 	if factor.Status != types.FactorStatusPendingActivation {
 		return nil, fmt.Errorf("factor already activated")
+	}
+	// Registration ceremonies expire server-side, so an abandoned ceremony
+	// cannot be finished indefinitely. Reuses sessionTTL so both WebAuthn paths
+	// behave consistently. Fails closed on a missing/zero CreatedAt: a pending
+	// factor written by BeginRegistration always carries one, so a zero value
+	// means the record did not come from a valid ceremony.
+	if factor.CreatedAt.IsZero() || time.Since(factor.CreatedAt) > sessionTTL {
+		return nil, fmt.Errorf("registration ceremony expired")
 	}
 
 	var session webauthn.SessionData
