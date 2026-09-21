@@ -517,7 +517,7 @@ func TestWebAuthnRegistrationExpires(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newTestService(t)
 
-	factor, _, err := svc.BeginRegistration(ctx, "id-1")
+	factor, creation, err := svc.BeginRegistration(ctx, "id-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,10 +537,19 @@ func TestWebAuthnRegistrationExpires(t *testing.T) {
 	}
 
 	// A genuine, correctly-signed registration response must still be refused
-	// because the ceremony itself has expired.
+	// because the ceremony itself has expired. The payload is real (valid CBOR
+	// attestation, real ES256 signature over the issued challenge) — the same
+	// construction TestWebAuthnRegistrationFullCeremony proves is ACCEPTED on a
+	// fresh ceremony — so rejection here is attributable to expiry alone. A
+	// malformed body (e.g. "{}") could fail for an unrelated reason and still
+	// make this test pass, which is why the payload is genuine.
 	auth := webauthntest.NewAuthenticator()
-	_ = auth
-	_, err = svc.FinishRegistration(ctx, "id-1", factor.ID, rawRequest([]byte(`{}`)))
+	payload := auth.CreationResponse(
+		creation.Response.Challenge.String(),
+		webauthntest.Origin,
+		webauthntest.RPID,
+	)
+	_, err = svc.FinishRegistration(ctx, "id-1", factor.ID, rawRequest(payload))
 	if err == nil {
 		t.Fatal("expected expired registration ceremony to be rejected")
 	}
@@ -578,10 +587,23 @@ func TestWebAuthnRegistrationRejectsZeroCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The expiry check runs BEFORE the body is unmarshalled, and the assertion
+	// below requires the error to be specifically the expiry error — so a `{}`
+	// body is sufficient here and cannot mask a different failure mode.
 	if _, err := svc.FinishRegistration(ctx, "id-1", factor.ID, rawRequest([]byte(`{}`))); err == nil {
 		t.Fatal("expected zero CreatedAt to be rejected")
 	} else if !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected an expiry error, got: %v", err)
+	}
+
+	// The factor must still be pending: a fail-closed rejection must not
+	// activate anything.
+	after, err := store.Factors(ctx).Get(ctx, factor.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != types.FactorStatusPendingActivation {
+		t.Fatalf("zero-CreatedAt rejection changed status to %s", after.Status)
 	}
 }
 
@@ -622,6 +644,74 @@ func registerCredentialWith(t *testing.T, svc *WebAuthnService, ctx context.Cont
 		t.Fatalf("expected active factor, got %s", finished.Status)
 	}
 	return finished
+}
+
+// TestWebAuthnRegistrationRequiresUserVerificationWhenConfigured closes the
+// registration-side counterpart of the assertion UV tests. It is the test that
+// a mutation breaking registrationFlags() (UV always set regardless of
+// NoUserVerified) would be caught by — without it, registration could silently
+// accept an unverified authenticator even under require_user_verification.
+func TestWebAuthnRegistrationRequiresUserVerificationWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	svc, store := newTestServiceWithUV(t, true)
+
+	// An authenticator that performs user-presence only (no PIN/biometric).
+	auth := webauthntest.NewAuthenticator()
+	auth.NoUserVerified = true
+
+	factor, creation, err := svc.BeginRegistration(ctx, "id-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := auth.CreationResponse(
+		creation.Response.Challenge.String(),
+		webauthntest.Origin,
+		webauthntest.RPID,
+	)
+	// Under require_user_verification the library rejects a registration whose
+	// authenticator data lacks the UV flag.
+	if _, err := svc.FinishRegistration(ctx, "id-1", factor.ID, rawRequest(payload)); err == nil {
+		t.Fatal("UV-less registration accepted while require_user_verification=true")
+	}
+
+	// The factor must remain pending: a rejected registration must not activate
+	// a credential, or the unverified authenticator would be usable.
+	after, err := store.Factors(ctx).Get(ctx, factor.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != types.FactorStatusPendingActivation {
+		t.Fatalf("rejected UV-less registration left factor %s, want pending_activation", after.Status)
+	}
+}
+
+// TestWebAuthnRegistrationAllowsUnverifiedWhenPreferred is the paired positive:
+// under the default (preferred), the same UV-less authenticator IS accepted, so
+// the rejection above is attributable to the require flag and not to a broken
+// ceremony. One-directional UV tests prove nothing; this is the other direction.
+func TestWebAuthnRegistrationAllowsUnverifiedWhenPreferred(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestServiceWithUV(t, false) // default: preferred
+
+	auth := webauthntest.NewAuthenticator()
+	auth.NoUserVerified = true
+
+	factor, creation, err := svc.BeginRegistration(ctx, "id-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := auth.CreationResponse(
+		creation.Response.Challenge.String(),
+		webauthntest.Origin,
+		webauthntest.RPID,
+	)
+	finished, err := svc.FinishRegistration(ctx, "id-1", factor.ID, rawRequest(payload))
+	if err != nil {
+		t.Fatalf("UV-less registration should succeed under 'preferred': %v", err)
+	}
+	if finished.Status != types.FactorStatusActive {
+		t.Fatalf("expected active factor under preferred, got %s", finished.Status)
+	}
 }
 
 func TestWebAuthnUserVerificationRequiredRejectsUnverified(t *testing.T) {
