@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // --- Redirect token-leak regression ----------------------------------------
@@ -211,10 +212,13 @@ func TestSanitizeServerBody_StripsControlChars(t *testing.T) {
 }
 
 func TestErrorBodyIsSanitizedAndCapped(t *testing.T) {
-	// The body contains a credential-shaped string plus control chars, and is
-	// longer than maxErrBodyBytes so the cap is exercised too.
-	hostile := "reflected: Bearer LOOKS-LIKE-A-REAL-TOKEN\n" +
-		strings.Repeat("A", maxErrBodyBytes*2)
+	// The body contains a credential-shaped string, control chars, and — so the
+	// rune-safe truncation is actually exercised through readResponse rather
+	// only via a direct unit call — a long run of 4-byte runes placed so the
+	// 512-byte cut lands mid-sequence. A naive data[:maxErrBodyBytes] slice
+	// produces U+FFFD here; truncateToRuneBoundary does not.
+	prefix := "reflected: Bearer LOOKS-LIKE-A-REAL-TOKEN\n"
+	hostile := prefix + strings.Repeat("🙂", 600)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -234,6 +238,16 @@ func TestErrorBodyIsSanitizedAndCapped(t *testing.T) {
 	// Cap: "server error (502): " prefix + at most maxErrBodyBytes of body.
 	if len(msg) > len("server error (502): ")+maxErrBodyBytes+64 {
 		t.Errorf("error message not length-capped: %d bytes", len(msg))
+	}
+	// The cut must be rune-aligned: this is the assertion that fails if
+	// readResponse slices bytes naively instead of calling
+	// truncateToRuneBoundary.
+	if strings.ContainsRune(msg, utf8.RuneError) {
+		t.Errorf("error body was sliced mid-rune (U+FFFD present); readResponse must truncate on a rune boundary: tail %q",
+			msg[max(0, len(msg)-16):])
+	}
+	if !strings.Contains(msg, "LOOKS-LIKE-A-REAL-TOKEN") {
+		t.Error("sanitisation destroyed legitimate diagnostic text")
 	}
 }
 
@@ -275,5 +289,82 @@ func TestWithTimeoutStillApplies(t *testing.T) {
 	}
 	if c.httpClient.CheckRedirect == nil {
 		t.Error("CheckRedirect lost when options are supplied")
+	}
+}
+
+// --- rune-safe truncation ---------------------------------------------------
+// The 512-byte error-body cap slices attacker-controlled bytes, so it can land
+// mid-UTF-8-sequence and emit U+FFFD, making an otherwise readable diagnostic
+// look corrupted. truncateToRuneBoundary walks back to a rune edge.
+
+func TestTruncateToRuneBoundary_NeverSplitsARune(t *testing.T) {
+	// Multi-byte runes of every width: 2-byte (é), 3-byte (€), 4-byte (🙂).
+	long := strings.Repeat("aé€🙂", 400) // far past maxErrBodyBytes
+	data := []byte(long)
+
+	out := truncateToRuneBoundary(data, maxErrBodyBytes)
+	if len(out) > maxErrBodyBytes {
+		t.Errorf("exceeded the cap: %d > %d", len(out), maxErrBodyBytes)
+	}
+	s := string(out)
+	if strings.ContainsRune(s, utf8.RuneError) {
+		t.Errorf("truncation split a rune and produced U+FFFD: tail %q", s[len(s)-min(12, len(s)):])
+	}
+	if !utf8.Valid(out) {
+		t.Error("truncated output is not valid UTF-8")
+	}
+	// Must have kept most of the budget rather than bailing out early.
+	if len(out) < maxErrBodyBytes-4 {
+		t.Errorf("dropped too much: %d bytes kept of a %d budget", len(out), maxErrBodyBytes)
+	}
+}
+
+func TestTruncateToRuneBoundary_EdgeCases(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+		max  int
+	}{
+		{"empty", []byte(""), 10},
+		{"shorter than cap", []byte("abc"), 10},
+		{"exactly at cap", []byte("abcde"), 5},
+		{"ascii cut mid-word", []byte("abcdefgh"), 5},
+		{"2-byte rune split", []byte("abcdé"), 5},
+		{"3-byte rune split", []byte("abcd€"), 5},
+		{"4-byte rune split", []byte("abcd🙂"), 5},
+		{"all continuation bytes", []byte{0x80, 0x80, 0x80, 0x80}, 2},
+		{"lone lead byte at end", append([]byte("abc"), 0xC3), 4},
+		{"invalid utf8 tail", []byte("abc\xff\xfe"), 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := truncateToRuneBoundary(tc.in, tc.max)
+			if len(out) > tc.max {
+				t.Errorf("exceeded cap: %d > %d", len(out), tc.max)
+			}
+			// Must never panic, and must never emit a replacement char for a
+			// clean-UTF-8 input. Invalid-byte inputs are allowed to keep the
+			// bytes (sanitisation handles them downstream).
+			if utf8.Valid(tc.in) && strings.ContainsRune(string(out), utf8.RuneError) {
+				t.Errorf("valid input produced U+FFFD: in=%q out=%q", tc.in, out)
+			}
+		})
+	}
+}
+
+func TestNewTrimsTrailingSlash(t *testing.T) {
+	// A configured base URL ending in "/" produced "https://core//v1/access/
+	// evaluate"; a real reverse proxy answers that with a 307. With redirects
+	// now refused, that 307 becomes a hard failure — so normalising the URL
+	// avoids breaking legitimate deployments that configure a trailing slash.
+	c := New("https://core.example.com/", "tok")
+	if c.baseURL != "https://core.example.com" {
+		t.Errorf("trailing slash not trimmed: %q", c.baseURL)
+	}
+	if got := New("https://core.example.com", "tok").baseURL; got != "https://core.example.com" {
+		t.Errorf("no-slash form changed: %q", got)
+	}
+	if got := New("https://core.example.com///", "tok").baseURL; got != "https://core.example.com" {
+		t.Errorf("multiple trailing slashes not trimmed: %q", got)
 	}
 }

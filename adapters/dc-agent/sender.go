@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -20,16 +21,39 @@ type Sender struct {
 	logger     *slog.Logger
 }
 
+// NewSender builds the dc-agent's OIAF-core client.
+//
+// SECURITY — redirects are refused, for the same reason as tools/adapter-sdk
+// (see its New()): Flush and HealthCheck both set
+// "Authorization: Bearer <adapter token>", and net/http follows 3xx
+// transparently. Go strips Authorization only when the redirect changes the
+// HOSTNAME, comparing hostnames with the port stripped, so a 302 to the same
+// hostname on a different port forwards the credential to whatever listens
+// there. A compromised core, or a redirect-issuing proxy in front of it, could
+// harvest every dc-agent token.
+//
+// Note this file carries its own http.Client rather than importing
+// tools/adapter-sdk — so the SDK fix did not protect it. Consolidating dc-agent
+// onto the SDK is tracked as a follow-up.
 func NewSender(baseURL, token string, batchSize int, interval time.Duration, logger *slog.Logger) *Sender {
 	return &Sender{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		logger: logger,
 	}
 }
+
+// isNotSuccess reports whether a status code is anything other than 2xx.
+// 3xx counts as failure: with redirects refused, a 3xx means the batch was NOT
+// accepted by the core. The previous `>= 400` gate treated a 302 as success and
+// went on to decode its empty body, silently dropping the events.
+func isNotSuccess(status int) bool { return status < 200 || status >= 300 }
 
 func (s *Sender) Flush(ctx context.Context, events []EventRecord) {
 	if len(events) == 0 {
@@ -62,7 +86,7 @@ func (s *Sender) Flush(ctx context.Context, events []EventRecord) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if isNotSuccess(resp.StatusCode) {
 		s.logger.Error("server rejected batch", "status", resp.StatusCode, "count", len(events))
 		return
 	}
@@ -105,7 +129,7 @@ func (s *Sender) HealthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= http.StatusBadRequest {
+	if isNotSuccess(resp.StatusCode) {
 		return fmt.Errorf("health check failed: %d", resp.StatusCode)
 	}
 	return nil

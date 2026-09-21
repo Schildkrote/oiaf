@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 	"unicode"
 )
@@ -36,8 +37,12 @@ func WithTimeout(d time.Duration) Option {
 // hostnames with the port stripped, so a 302 to the same hostname on a
 // DIFFERENT PORT carries the bearer token to whatever is listening there. A
 // compromised core, or a redirect-issuing proxy in front of it, could therefore
-// collect every adapter credential. This affects all sdk consumers
-// (adapters/pam, adapters/okta, adapters/dc-agent).
+// collect every adapter credential. This affects every sdk consumer — currently
+// adapters/pam/oiaf-pam-helper, which ships in tag v0.2.0-mfa.
+//
+// NOTE: adapters/dc-agent does NOT import this package; it carries its own
+// http.Client and had the identical bug, fixed separately in
+// adapters/dc-agent/sender.go. Don't assume fixing the SDK protects dc-agent.
 //
 // OIAF core never issues redirects on these endpoints, so refusing them outright
 // is both safe and minimal: CheckRedirect returns http.ErrUseLastResponse, the
@@ -47,7 +52,7 @@ func WithTimeout(d time.Duration) Option {
 // fail-open, worse than a crash).
 func New(baseURL, token string, opts ...Option) *Client {
 	c := &Client{
-		baseURL: baseURL,
+		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -136,12 +141,48 @@ func readResponse(resp *http.Response) (json.RawMessage, error) {
 		// with the much larger success cap (a valid decision payload may be
 		// large), but an error body is attacker-controlled and callers log this
 		// string — so it must not carry up to maxRespBodyBytes into the logs.
-		if len(data) > maxErrBodyBytes {
-			data = data[:maxErrBodyBytes]
-		}
+		// Cut on a rune boundary: slicing mid-rune would emit U+FFFD and make
+		// the message look corrupted for no diagnostic gain.
+		data = truncateToRuneBoundary(data, maxErrBodyBytes)
 		return nil, fmt.Errorf("server error (%d): %s", resp.StatusCode, sanitizeServerBody(data))
 	}
 	return data, nil
+}
+
+// truncateToRuneBoundary returns at most max bytes of b, walking back off any
+// partial UTF-8 sequence at the cut so no replacement character is produced.
+func truncateToRuneBoundary(b []byte, max int) []byte {
+	if len(b) <= max {
+		return b
+	}
+	b = b[:max]
+	// Walk back over continuation bytes (10xxxxxx) to the start of the last
+	// rune, then drop it if the sequence is incomplete.
+	i := len(b)
+	for i > 0 && b[i-1]&0xC0 == 0x80 {
+		i--
+	}
+	if i == 0 {
+		return b[:max]
+	}
+	lead := b[i-1]
+	var size int
+	switch {
+	case lead < 0x80:
+		size = 1
+	case lead&0xE0 == 0xC0:
+		size = 2
+	case lead&0xF0 == 0xE0:
+		size = 3
+	case lead&0xF8 == 0xF0:
+		size = 4
+	default:
+		size = 1 // invalid lead byte; keep it and let sanitisation handle it
+	}
+	if len(b)-i+1 < size {
+		return b[:i-1] // incomplete trailing rune: drop it, lead byte included
+	}
+	return b
 }
 
 const (

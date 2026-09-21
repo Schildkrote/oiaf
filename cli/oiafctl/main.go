@@ -704,7 +704,16 @@ func apiDo(opts globalOpts, method, path string, reqBody io.Reader, result inter
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Refuse redirects: this client sends an admin Bearer token, and net/http
+	// only strips Authorization when the redirect changes the hostname (port
+	// stripped) — so a 302 to the same host on another port would forward the
+	// credential. Same class as the tools/adapter-sdk and dc-agent fixes.
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
