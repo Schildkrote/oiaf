@@ -275,9 +275,12 @@ func TestNoTokenLeak_ErrorPaths(t *testing.T) {
 	errs = append(errs, err)
 	logger.Error("transport failure", "error", err)
 
-	// (c) Rate-limit exhaustion: 429 forever, error carries Retry-After details.
+	// (c) Rate-limit exhaustion: 429 forever. Deliberately NO Retry-After
+	// header: delta-seconds has a 1s floor that maxBackoff cannot shorten, so
+	// setting it made this test burn ~4s of real sleeping. Without it the
+	// backoff comes from maxBackoff (10ms below) and the exhaustion path is
+	// still fully exercised.
 	rlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer rlSrv.Close()
