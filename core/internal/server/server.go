@@ -35,13 +35,14 @@ type Server struct {
 	challenge *challenge.Service
 	totp      *mfa.TOTPService
 	push      *mfa.PushService
+	webauthn  *mfa.WebAuthnService
 	discovery *discovery.Engine
 	inventory *inventory.Scanner
 	bus       *bus.Emitter
 	http      *http.Server
 }
 
-func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter) *Server {
+func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, webauthnSvc *mfa.WebAuthnService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter) *Server {
 	s := &Server{
 		cfg:       cfg,
 		logger:    logger,
@@ -53,6 +54,7 @@ func New(cfg *config.Config, store storage.Store, logger *slog.Logger, authSvc *
 		challenge: challengeSvc,
 		totp:      totpSvc,
 		push:      pushSvc,
+		webauthn:  webauthnSvc,
 		discovery: discoveryEngine,
 		inventory: inventoryScanner,
 		bus:       busEmitter,
@@ -87,7 +89,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 
-	apiHandler := api.NewHandler(s.store, s.auth, s.audit, s.policy, s.risk, s.challenge, s.totp, s.push, s.discovery, s.inventory, s.bus, s.logger)
+	apiHandler := api.NewHandler(s.store, s.auth, s.audit, s.policy, s.risk, s.challenge, s.totp, s.push, s.webauthn, s.discovery, s.inventory, s.bus, s.logger)
 	authMiddleware := auth.Middleware(s.auth)
 	apiHandler.RegisterRoutes(mux, authMiddleware)
 

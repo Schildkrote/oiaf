@@ -9,7 +9,7 @@ expiry, and attempt limiting.
 |--------|--------|-------------|
 | TOTP | Active | RFC 6238, SHA-1, 6 digits, 30s period |
 | Push | Active | HMAC-SHA256 signed approval with number matching |
-| WebAuthn | Planned | FIDO2 / passkey support |
+| WebAuthn | Implemented, unproven on real hardware | FIDO2 / passkey, phishing-resistant (ES256+ via go-webauthn). Tested against a software authenticator only — see the caveat in [WebAuthn](#webauthn). |
 | Email | Planned | OTP via email |
 | SMS | Planned | OTP via SMS (low security, last resort) |
 
@@ -44,13 +44,65 @@ expiry, and attempt limiting.
   HMAC-SHA256 using the hashed secret.
 - Timestamp skew: configurable (default 60s) to prevent replay.
 
+## WebAuthn
+
+> **Verification status — read before relying on this factor.**
+> The WebAuthn factor is implemented and unit-tested against a **software test
+> authenticator** (`core/internal/webauthntest`) performing real ES256
+> ceremonies: attestation objects, CBOR encoding and genuine signatures. It has
+> **not** been proven against a real browser passkey or a hardware security key
+> (e.g. YubiKey), including platform authenticators, resident/discoverable
+> credentials, roaming-credential quirks and the `largeBlob`/`hmac-secret`
+> extension paths. Treat it as **experimental** and validate against your own
+> authenticator fleet before production use. Cross-user credential scoping,
+> assertion replay and ceremony expiry are covered by negative tests.
+
+WebAuthn provides phishing-resistant MFA using platform or roaming
+authenticators (passkeys, security keys). It is implemented via the
+`github.com/go-webauthn/webauthn` library and follows the same
+enroll/activate-style ceremony pattern as TOTP, adapted to WebAuthn's
+challenge/response ceremonies.
+
+- Configuration: Relying Party settings under `webauthn:` in `config.yaml`
+  (`rp_id`, `rp_origins`, `rp_display_name`) with `OIAF_WEBAUTHN_RP_ID` /
+  `OIAF_WEBAUTHN_RP_ORIGINS` / `OIAF_WEBAUTHN_RP_DISPLAY_NAME` env overrides.
+  `rp_id` is the effective domain (no scheme/port); `rp_origins` is a
+  comma-separated allowlist of fully qualified browser origins. Without both,
+  the factor is disabled and its endpoints return `503`.
+- Registration: `POST /v1/identities/{id}/factors/webauthn/registration/begin`
+  creates a `pending_activation` factor and returns the WebAuthn
+  `publicKey` creation options for the browser. The browser's raw
+  `navigator.credentials.create()` result is POSTed to
+  `.../registration/{factor_id}/finish`, which verifies the attestation and
+  activates the factor.
+- Verification (identity-scoped): `.../verification/begin` returns assertion
+  options; the raw `navigator.credentials.get()` result goes to
+  `.../verification/finish`.
+- Verification (challenge-orchestrated / policy step-up):
+  `POST /v1/challenge/{id}/webauthn/begin` then
+  `POST /v1/challenge/{id}/webauthn/finish`. This path binds the ceremony to
+  the challenge's TTL and attempt accounting and is the method a policy
+  selecting `webauthn` drives end-to-end.
+- Credential storage: each registered credential is a `types.Factor`
+  (`method=webauthn`) whose opaque `Credentials` bytes hold the JSON
+  credential record (public key, sign counter, flags). In-flight ceremony
+  sessions ride on the pending factor (registration) or on the challenge
+  (`WebAuthnSession`, verification), so no new storage interface is needed
+  and the PostgresStore skeleton stays compatible (credentials → bytea).
+- Attestation: `none` conveyance preference (low-friction MFA). The sign counter
+  is persisted per assertion to support clone detection.
+- User verification: `webauthn.require_user_verification` selects `preferred`
+  (default — the authenticator is asked for UV but the ceremony still succeeds
+  without it) or `required` (the ceremony fails unless the user-verified flag is
+  set). Set `required` if you need UV to be *enforced* server-side rather than
+  merely requested; with `preferred` an authenticator that skips UV is accepted.
+- Ceremony expiry: registration ceremonies expire server-side after the same TTL
+  as verification sessions (5 minutes), so an abandoned `pending_activation`
+  factor cannot be finished indefinitely. Expired ceremonies are rejected and the
+  factor stays pending.
+
 ## Method Preference
 
 When a policy specifies `challenge.methods`, the orchestrator uses those
 methods. If no methods are specified, TOTP is the default. The order in the
 array indicates preference.
-
-## WebAuthn (Future)
-
-WebAuthn will provide phishing-resistant MFA using platform or roaming
-authenticators. The `MFAMethod` enum already includes `webauthn`.

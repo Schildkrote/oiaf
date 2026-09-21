@@ -32,13 +32,17 @@ type Handler struct {
 	challenge *challenge.Service
 	totp      *mfa.TOTPService
 	push      *mfa.PushService
+	webauthn  *mfa.WebAuthnService
 	discovery *discovery.Engine
 	inventory *inventory.Scanner
 	bus       *bus.Emitter
 	logger    *slog.Logger
 }
 
-func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter, logger *slog.Logger) *Handler {
+// NewHandler builds the API handler. webauthnSvc may be nil when the WebAuthn
+// factor is not configured; the WebAuthn endpoints then return 503, mirroring
+// the inventory scanner's not-configured behaviour.
+func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audit.Service, policyEngine *policy.BuiltinEngine, riskEngine *risk.RuleEngine, challengeSvc *challenge.Service, totpSvc *mfa.TOTPService, pushSvc *mfa.PushService, webauthnSvc *mfa.WebAuthnService, discoveryEngine *discovery.Engine, inventoryScanner *inventory.Scanner, busEmitter *bus.Emitter, logger *slog.Logger) *Handler {
 	return &Handler{
 		store:     store,
 		auth:      authSvc,
@@ -48,6 +52,7 @@ func NewHandler(store storage.Store, authSvc *auth.Authenticator, auditSvc *audi
 		challenge: challengeSvc,
 		totp:      totpSvc,
 		push:      pushSvc,
+		webauthn:  webauthnSvc,
 		discovery: discoveryEngine,
 		inventory: inventoryScanner,
 		bus:       busEmitter,
@@ -62,6 +67,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 
 	mux.Handle("POST /v1/access/evaluate", protected(h.handleAccessEvaluate))
 	mux.Handle("POST /v1/challenge/{id}/verify", protected(h.handleChallengeVerify))
+	mux.Handle("POST /v1/challenge/{id}/webauthn/begin", protected(h.handleChallengeWebAuthnBegin))
+	mux.Handle("POST /v1/challenge/{id}/webauthn/finish", protected(h.handleChallengeWebAuthnFinish))
 	mux.Handle("GET /v1/challenges", protected(h.handleListChallenges))
 
 	mux.Handle("GET /v1/identities", protected(h.handleListIdentities))
@@ -72,6 +79,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, authMiddleware func(http.Ha
 
 	mux.Handle("POST /v1/identities/{id}/factors/totp/enroll", protected(h.handleTOTPEnroll))
 	mux.Handle("POST /v1/identities/{id}/factors/totp/activate", protected(h.handleTOTPActivate))
+
+	mux.Handle("POST /v1/identities/{id}/factors/webauthn/registration/begin", protected(h.handleWebAuthnBeginRegistration))
+	mux.Handle("POST /v1/identities/{id}/factors/webauthn/registration/{factor_id}/finish", protected(h.handleWebAuthnFinishRegistration))
+	mux.Handle("POST /v1/identities/{id}/factors/webauthn/verification/begin", protected(h.handleWebAuthnBeginVerification))
+	mux.Handle("POST /v1/identities/{id}/factors/webauthn/verification/finish", protected(h.handleWebAuthnFinishVerification))
 
 	mux.Handle("POST /v1/devices", protected(h.handleCreateDevice))
 	mux.Handle("GET /v1/devices", protected(h.handleListDevices))
@@ -354,6 +366,150 @@ func (h *Handler) handleTOTPActivate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "active"})
+}
+
+// WebAuthn factor endpoints. The begin endpoints return the raw WebAuthn
+// ceremony options JSON (the object a browser passes to
+// navigator.credentials.create/get); the finish endpoints consume the raw
+// authenticator response JSON, exactly like the go-webauthn library's
+// recommended HTTP integration. Registration mirrors the TOTP
+// enroll/activate pair: begin creates a pending_activation factor, finish
+// activates it. Verification is an identity-scoped convenience path; the
+// policy-driven path runs through the challenge orchestrator
+// (/v1/challenge/{id}/webauthn/begin|finish).
+
+func (h *Handler) handleWebAuthnBeginRegistration(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	factor, creation, err := h.webauthn.BeginRegistration(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin webauthn registration: "+err.Error())
+		return
+	}
+
+	// The browser needs the publicKey options; factor_id binds the finish call
+	// back to this ceremony.
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"factor_id": factor.ID,
+		"status":    factor.Status,
+		"publicKey": creation.Response,
+		"mediation": creation.Mediation,
+	})
+}
+
+func (h *Handler) handleWebAuthnFinishRegistration(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	// The request body must be the raw JSON result of
+	// navigator.credentials.create() (the library consumes it verbatim), so
+	// the factor binding rides in the path instead of a JSON wrapper field.
+	factorID := r.PathValue("factor_id")
+	if factorID == "" {
+		writeError(w, http.StatusBadRequest, "factor_id is required")
+		return
+	}
+
+	factor, err := h.webauthn.FinishRegistration(r.Context(), id, factorID, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"factor_id": factor.ID,
+		"status":    factor.Status,
+	})
+}
+
+func (h *Handler) handleWebAuthnBeginVerification(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	assertion, err := h.webauthn.BeginIdentityVerification(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"publicKey": assertion.Response,
+		"mediation": assertion.Mediation,
+	})
+}
+
+func (h *Handler) handleWebAuthnFinishVerification(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	// Identity-scoped verification: the ceremony session was parked
+	// server-side by the begin endpoint and is consumed single-use here. For
+	// policy-driven step-up use the challenge endpoints instead, which bind
+	// the ceremony to a challenge's attempt/TTL accounting.
+	valid, err := h.webauthn.FinishIdentityVerification(r.Context(), id, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"verified": valid})
+}
+
+// WebAuthn challenge endpoints: the policy-driven step-up path. Begin returns
+// assertion options bound to the challenge; finish consumes the raw
+// authenticator response and resolves the challenge.
+
+func (h *Handler) handleChallengeWebAuthnBegin(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	optionsJSON, err := h.challenge.BeginWebAuthn(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(optionsJSON)
+}
+
+func (h *Handler) handleChallengeWebAuthnFinish(w http.ResponseWriter, r *http.Request) {
+	if h.webauthn == nil {
+		writeError(w, http.StatusServiceUnavailable, "webauthn factor not configured")
+		return
+	}
+	id := r.PathValue("id")
+
+	ch, err := h.challenge.FinishWebAuthn(r.Context(), id, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if h.bus != nil {
+		h.bus.Emit("challenge.verified", "verify", ch.ID,
+			map[string]any{"request_id": ch.RequestID, "identity_id": ch.IdentityID},
+			map[string]any{"method": "webauthn", "status": string(ch.Status)})
+	}
+
+	writeJSON(w, http.StatusOK, ch)
 }
 
 func (h *Handler) handleCreateDevice(w http.ResponseWriter, r *http.Request) {

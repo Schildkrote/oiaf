@@ -14,6 +14,26 @@ security:
   push_timestamp_skew_seconds: 60
   require_secure_cookies: true
 
+# WebAuthn (FIDO2/passkey) MFA factor. rp_id is the effective domain (no
+# scheme or port); rp_origins is a comma-separated allowlist of browser
+# origins. Env overrides: OIAF_WEBAUTHN_RP_ID, OIAF_WEBAUTHN_RP_ORIGINS,
+# OIAF_WEBAUTHN_RP_DISPLAY_NAME. Clear rp_id to disable the factor.
+webauthn:
+  # Effective Relying Party domain (no scheme, no port). Production must set
+  # this to your real domain. Env: OIAF_WEBAUTHN_RP_ID
+  rp_id: localhost
+  # Displayed to the user by the authenticator/browser. Env: OIAF_WEBAUTHN_RP_DISPLAY_NAME
+  rp_display_name: OIAF
+  # Comma-separated allowlist of fully-qualified browser origins (scheme+host+port).
+  # No wildcards are supported; an empty list disables the factor. Env: OIAF_WEBAUTHN_RP_ORIGINS
+  rp_origins: http://localhost:8080
+  # false (default) = WebAuthn "preferred": the authenticator is ASKED for user
+  #   verification (PIN/biometric) but a ceremony that skipped it still succeeds.
+  # true = "required": ceremonies without the userVerified flag are REJECTED, so
+  #   UV is enforced server-side rather than merely requested.
+  # Env: OIAF_WEBAUTHN_REQUIRE_USER_VERIFICATION (bool; a typo fails startup)
+  require_user_verification: false
+
 policy:
   default_effect: deny
 
