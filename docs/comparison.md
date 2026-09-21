@@ -41,7 +41,7 @@ capability is real, functional, in progress, or only designed, the tables say so
 | --- | --- | --- | --- |
 | TOTP (RFC 6238) | **Functional** — implemented with unit tests | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Per-user MFA licensing for straightforward TOTP deployments on systems OIAF can actually reach (today: Linux PAM, dev/test). |
 | Push MFA | **Functional** — implemented with unit tests; requires a companion push app you operate | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Push licensing — but you must supply/host the push endpoint; there is no polished consumer app. |
-| WebAuthn / FIDO2 | **In progress** — type definitions exist; factor implementation is not complete | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Nothing yet. Do not plan a phishing-resistant rollout on OIAF today. |
+| WebAuthn / FIDO2 | **Functional** — registration + assertion ceremonies via go-webauthn, wired into the challenge orchestrator; negative tests cover cross-user replay, assertion replay and ceremony expiry. **Tested only against a software authenticator — not yet proven against a real browser passkey or hardware security key.** | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Per-user phishing-resistant MFA licensing *once validated against real hardware*. Do not plan a phishing-resistant rollout on OIAF today — the ceremony has never been exercised against a genuine passkey, platform authenticator or resident credential. |
 
 ### Linux PAM inline enforcement & sshd step-up
 
@@ -78,7 +78,7 @@ capability is real, functional, in progress, or only designed, the tables say so
 ## Honest bottom line
 
 - **What is genuinely usable now (in dev/test):** the decision API, rule-based risk engine, TOTP/push factors, the Linux PAM helper with its packaging and field-test script, the read-only AD inventory scanner, and the hash-chained audit design.
-- **What is not:** WebAuthn (in progress), the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only), identity graph analytics (roadmap), and the remaining cloud-IdP adapters — Entra ID and Duo are design-stage skeletons that exit with an error. The Okta adapter is implemented (read-only System Log ingestion + risk signals, offline-tested) but has not been validated against a live tenant.
+- **What is not:** the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only), identity graph analytics (roadmap), and the remaining cloud-IdP adapters — Entra ID and Duo are design-stage skeletons that exit with an error. Two capabilities are implemented but **unproven against anything real**: WebAuthn (software authenticator only — never a genuine passkey or hardware key) and the Okta adapter (read-only System Log ingestion + risk signals, offline-tested, never validated against a live tenant).
 - **What OIAF will realistically replace for you today:** nothing in production. It is a foundation you can audit, extend, and experiment with — AGPL-licensed, with an architecture that targets the same problem space as the vendors above.
 
 If you evaluate OIAF against a commercial product, treat this page as the claim
