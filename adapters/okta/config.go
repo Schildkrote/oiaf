@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -186,6 +187,16 @@ func loadConfig() (*Config, error) {
 		}
 		if !strings.HasPrefix(cfg.OktaBaseURL, "http://") && !strings.HasPrefix(cfg.OktaBaseURL, "https://") {
 			return nil, errors.New("OKTA_BASE_URL must include the scheme (https://)")
+		}
+		// Refuse plaintext to a non-loopback tenant. The SSWS API token is sent on
+		// every request, so http:// to a real tenant would put it on the wire.
+		// http:// on loopback stays allowed so httptest-backed tests work.
+		if strings.HasPrefix(cfg.OktaBaseURL, "http://") {
+			if u, err := url.Parse(cfg.OktaBaseURL); err != nil {
+				return nil, fmt.Errorf("OKTA_BASE_URL is not a valid URL: %w", err)
+			} else if !isLoopbackHost(u.Hostname()) {
+				return nil, errors.New("OKTA_BASE_URL must use https:// for a non-loopback tenant: the API token would be sent in plaintext")
+			}
 		}
 	}
 

@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -230,9 +231,69 @@ func (c *Client) FetchLogs(ctx context.Context, p FetchLogsParams) ([]LogEvent, 
 		}
 		out = append(out, events...)
 		pages++
-		nextURL = next
+		// The next-page URL comes from the response's Link header, i.e. from the
+		// remote endpoint. Validating it before the next request is load-bearing:
+		// doFetchPage attaches the SSWS Authorization header to whatever URL it is
+		// handed, so following an unvalidated Link would let a compromised or
+		// misconfigured endpoint exfiltrate the API token to an arbitrary host.
+		if next != "" {
+			validated, verr := c.validateNextURL(next)
+			if verr != nil {
+				return out, verr
+			}
+			nextURL = validated
+		} else {
+			nextURL = ""
+		}
 	}
 	return out, nil
+}
+
+// ErrUnsafeNextURL is returned when a paginated Link header points somewhere we
+// refuse to send credentials. Non-retryable: retrying cannot change the answer.
+var ErrUnsafeNextURL = errors.New("okta: refusing to follow pagination link")
+
+// validateNextURL ensures a Link-header pagination target is safe to send the
+// API token to. Requirements:
+//   - scheme must be https, EXCEPT http on a loopback host (so httptest-backed
+//     tests work); plaintext to a non-loopback host is always refused
+//   - host:port must exactly match the configured base URL's host:port
+//
+// Anything else is rejected rather than silently followed.
+func (c *Client) validateNextURL(raw string) (string, error) {
+	next, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("%w: unparseable %q: %v", ErrUnsafeNextURL, raw, err)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("%w: base URL is invalid: %v", ErrUnsafeNextURL, err)
+	}
+	if next.Host == "" {
+		return "", fmt.Errorf("%w: missing host in %q", ErrUnsafeNextURL, raw)
+	}
+	if next.Host != base.Host {
+		return "", fmt.Errorf("%w: host %q is not the configured tenant %q", ErrUnsafeNextURL, next.Host, base.Host)
+	}
+	if next.Scheme == "https" {
+		return next.String(), nil
+	}
+	if next.Scheme == "http" && isLoopbackHost(next.Hostname()) {
+		return next.String(), nil
+	}
+	return "", fmt.Errorf("%w: scheme %q is not permitted (https required; http only on loopback)", ErrUnsafeNextURL, next.Scheme)
+}
+
+// isLoopbackHost reports whether a host refers to the local machine. Used to
+// allow http:// in tests only; never permits plaintext to a remote tenant.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // fetchPage retrieves one page (with retries) and returns the rel="next"

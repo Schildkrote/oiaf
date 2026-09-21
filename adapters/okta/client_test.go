@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -236,5 +237,140 @@ func TestNextLink(t *testing.T) {
 		if got := nextLink(tc.header); got != tc.want {
 			t.Errorf("nextLink(%q) = %q, want %q", tc.header, got, tc.want)
 		}
+	}
+}
+
+// --- Pagination credential-leak tests --------------------------------------
+// Regression coverage for a token-exfiltration path found in independent
+// review: doFetchPage attaches the SSWS Authorization header to whatever URL
+// it is handed, and the next-page URL came straight from the remote response's
+// Link header. A compromised or misconfigured endpoint could therefore point
+// pagination at an attacker host and collect the API token. These tests must
+// fail if the host/scheme validation is removed.
+
+// sentinelToken is distinctive so that asserting it never appears in a request
+// to the wrong host is unambiguous.
+const sentinelToken = "SSWS-SENTINEL-TOKEN-do-not-leak"
+
+func TestFetchLogs_RefusesToFollowPaginationToAnotherHost(t *testing.T) {
+	var attackerAuth atomic.Value // stores string
+	attackerAuth.Store("")
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerAuth.Store(r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer attacker.Close()
+
+	// Legitimate tenant whose first page points pagination at the attacker.
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", fmt.Sprintf(`<%s/api/v1/logs?after=abc>; rel="next"`, attacker.URL))
+		_, _ = w.Write([]byte(`[{"id":"e1","uuid":"01","published":"2026-09-20T12:00:00Z","eventType":"user.session.start"}]`))
+	}))
+	defer tenant.Close()
+
+	c := NewClient(tenant.URL, sentinelToken, 5*time.Second)
+	_, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 5})
+	if err == nil {
+		t.Fatal("expected FetchLogs to refuse an unsafe pagination link, got nil error")
+	}
+	if !errors.Is(err, ErrUnsafeNextURL) {
+		t.Errorf("expected ErrUnsafeNextURL, got %v", err)
+	}
+	if got := attackerAuth.Load().(string); got != "" {
+		t.Errorf("SECURITY: API token was sent to the attacker host: %q", got)
+	}
+}
+
+func TestFetchLogs_AllowsPaginationOnSameHost(t *testing.T) {
+	var pages int32
+	var authOK int32
+	var tenantHost string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tenantHost == "" {
+			tenantHost = r.Host
+		}
+		if r.Host != tenantHost {
+			t.Errorf("request went to unexpected host %q (want %q)", r.Host, tenantHost)
+		}
+		if r.Header.Get("Authorization") == "SSWS "+sentinelToken {
+			atomic.AddInt32(&authOK, 1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&pages, 1) == 1 {
+			// Same host as the tenant: must be followed.
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v1/logs?after=abc>; rel="next"`, r.Host))
+		}
+		_, _ = w.Write([]byte(`[{"id":"e1","uuid":"01","published":"2026-09-20T12:00:00Z","eventType":"user.session.start"}]`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, sentinelToken, 5*time.Second)
+	events, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 5})
+	if err != nil {
+		t.Fatalf("same-host pagination should succeed, got %v", err)
+	}
+	if got := atomic.LoadInt32(&pages); got != 2 {
+		t.Errorf("expected 2 pages fetched, got %d", got)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 events, got %d", len(events))
+	}
+	if got, want := atomic.LoadInt32(&authOK), atomic.LoadInt32(&pages); got != want {
+		t.Errorf("token should be sent on every same-host request: %d of %d", got, want)
+	}
+}
+
+func TestValidateNextURL_RejectsUnsafeTargets(t *testing.T) {
+	c := &Client{baseURL: "https://tenant-1.okta.com"}
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"other tenant host", "https://evil.example.com/api/v1/logs"},
+		{"same host different port", "https://tenant-1.okta.com:8443/api/v1/logs"},
+		{"plaintext to remote host", "http://tenant-1.okta.com/api/v1/logs"},
+		{"empty", ""},
+		{"missing host", "/api/v1/logs?after=abc"},
+		{"unparseable", "https://%zz.invalid/api"},
+		{"userinfo trick", "https://tenant-1.okta.com@evil.example.com/api/v1/logs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := c.validateNextURL(tt.raw)
+			if err == nil {
+				t.Errorf("expected rejection of %q, got accepted URL %q", tt.raw, got)
+				return
+			}
+			if !errors.Is(err, ErrUnsafeNextURL) {
+				t.Errorf("expected ErrUnsafeNextURL, got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateNextURL_AllowsHTTPSOnSameHost(t *testing.T) {
+	c := &Client{baseURL: "https://tenant-1.okta.com"}
+	got, err := c.validateNextURL("https://tenant-1.okta.com/api/v1/logs?after=abc")
+	if err != nil {
+		t.Fatalf("expected same-host https link to be accepted, got %v", err)
+	}
+	if got == "" {
+		t.Error("expected a non-empty validated URL")
+	}
+}
+
+func TestValidateNextURL_LoopbackHTTPAllowedOnlyForLoopbackTenant(t *testing.T) {
+	// httptest servers listen on 127.0.0.1 over http; blocking that would break
+	// every offline test. Loopback http must stay permitted, but a loopback link
+	// must NOT be accepted when the configured tenant is a remote https host.
+	loopback := &Client{baseURL: "http://127.0.0.1:9999"}
+	if _, err := loopback.validateNextURL("http://127.0.0.1:9999/api/v1/logs?after=abc"); err != nil {
+		t.Errorf("loopback http should be allowed for a loopback tenant, got %v", err)
+	}
+	remote := &Client{baseURL: "https://tenant-1.okta.com"}
+	if _, err := remote.validateNextURL("http://127.0.0.1:9999/api/v1/logs"); err == nil {
+		t.Error("loopback http must be rejected when the tenant is a remote https host")
 	}
 }
