@@ -458,3 +458,98 @@ func TestDebugData_LegacyAuthStillDetectsAcrossValueTypes(t *testing.T) {
 		t.Error("isLegacyAuth missed an /imap URL nested inside a non-string debugData value")
 	}
 }
+
+// --- Redirect pinning -------------------------------------------------------
+// Independent review proved that validateNextURL alone was insufficient:
+// net/http follows 3xx transparently, so a redirect to the SAME hostname on a
+// DIFFERENT PORT carried `Authorization: SSWS ***` to a listener the operator
+// never pinned — bypassing the host:port invariant the Link-header validation
+// enforces. (A different hostname was safe: net/http strips Authorization on
+// cross-host redirects. Same-host/different-port was not.)
+// Okta's System Log paginates via Link headers, not 3xx, so NewClient now
+// refuses redirects outright.
+
+func TestFetchLogs_RedirectToDifferentPortDoesNotLeakToken(t *testing.T) {
+	var attackerAuth atomic.Value
+	attackerAuth.Store("")
+	var attackerHits int32
+	// Attacker listener on the SAME hostname (127.0.0.1), different port.
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attackerHits, 1)
+		attackerAuth.Store(r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer attacker.Close()
+
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 302 to the attacker: same host, different port.
+		w.Header().Set("Location", attacker.URL+"/api/v1/logs?after=x")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer tenant.Close()
+
+	c := NewClient(tenant.URL, sentinelToken, 5*time.Second)
+	_, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 5})
+	if err == nil {
+		t.Fatal("expected a 3xx to be refused as an unexpected status, got nil error")
+	}
+	if got := attackerAuth.Load().(string); got != "" {
+		t.Errorf("SECURITY: token was sent through a redirect to an unpinned port: %q", got)
+	}
+	if got := atomic.LoadInt32(&attackerHits); got != 0 {
+		t.Errorf("SECURITY: redirect was followed %d time(s); the client must not follow 3xx at all", got)
+	}
+}
+
+func TestFetchLogs_RedirectToDifferentHostDoesNotLeakToken(t *testing.T) {
+	// The hostname-differs case: net/http already strips Authorization here,
+	// but pin the behaviour so a future CheckRedirect change cannot regress it.
+	var attackerAuth atomic.Value
+	attackerAuth.Store("")
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerAuth.Store(r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer attacker.Close()
+
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", attacker.URL+"/api/v1/logs")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer tenant.Close()
+
+	c := NewClient(tenant.URL, sentinelToken, 5*time.Second)
+	if _, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 5}); err == nil {
+		t.Fatal("expected the redirect to be refused, got nil error")
+	}
+	if got := attackerAuth.Load().(string); got != "" {
+		t.Errorf("SECURITY: token reached the redirect target: %q", got)
+	}
+}
+
+func TestFetchLogs_HappyPathUnaffectedByRedirectPolicy(t *testing.T) {
+	// Regression guard: refusing redirects must not break normal 200 paging.
+	var pages int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&pages, 1) == 1 {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s/api/v1/logs?after=x>; rel="next"`, r.Host))
+		}
+		_, _ = w.Write([]byte(`[{"uuid":"e1","published":"2026-09-20T12:00:00Z","eventType":"user.session.start"}]`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-token", 5*time.Second)
+	events, err := c.FetchLogs(context.Background(), FetchLogsParams{Limit: 100, MaxPages: 5})
+	if err != nil {
+		t.Fatalf("normal Link-header pagination must still work, got %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 events across 2 pages, got %d", len(events))
+	}
+	if got := atomic.LoadInt32(&pages); got != 2 {
+		t.Errorf("expected 2 page fetches, got %d", got)
+	}
+}

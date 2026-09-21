@@ -441,3 +441,104 @@ type erroringSink struct{ err error }
 
 func (s *erroringSink) Emit(ctx context.Context, sig Signal) error { return s.err }
 func (s *erroringSink) Close() error                               { return nil }
+
+// --- Leak channels the first round left blind -------------------------------
+// Independent re-review found two channels where a token could be injected and
+// the ENTIRE leak suite would still pass green:
+//
+//   (c) the EvaluateSink error wrapper (sink.go) — the adapter bearer token
+//       was never exercised as a real secret in any FAILING path, because the
+//       happy-path test's mock core returns 200 so the error branch never ran.
+//   (d) poller.go's logger.Error("poll cycle failed") — no leak test ever drove
+//       a poll-cycle failure through run().
+//
+// Both are now covered by driving real failures through run() with both
+// canaries live. Each has a positive control proving the failing path actually
+// executed, so the absence-of-canary assertion cannot pass vacuously.
+
+// TestNoTokenLeak_SinkFailurePath drives an EvaluateSink FAILURE through run():
+// mock Okta serves an event that produces a signal, mock OIAF core rejects it
+// with 401, so the sink's error wrapper and the poller's stop-before-cursor
+// path both execute with the adapter canary configured.
+func TestNoTokenLeak_SinkFailurePath(t *testing.T) {
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"uuid":"s1","published":"2026-09-20T12:00:00Z","eventType":"group.user_membership.add","actor":{"alternateId":"admin@corp.example"},"outcome":{"result":"SUCCESS"}}]`))
+	}))
+	defer tenant.Close()
+
+	// Core rejects the adapter token: forces the EvaluateSink error path.
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"adapter token rejected"}`))
+	}))
+	defer core.Close()
+
+	c, logger, stop := startCapture(t)
+	defer stop()
+
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	cfg := &Config{
+		StateFile:    statePath,
+		OktaBaseURL:  tenant.URL,
+		OktaToken:    canaryOktaToken,
+		AdapterToken: canaryAdapterToken, // live secret on the failing path
+		ServerURL:    core.URL,
+		Limit:        100,
+		MaxPages:     5,
+		Once:         true,
+		PollInterval: 10 * time.Millisecond,
+		Timeout:      2 * time.Second,
+	}
+
+	runErr := run(context.Background(), cfg, logger)
+	stop()
+	blob := c.everything(t, statePath, runErr)
+
+	// Positive controls: both the poller's stop-before-cursor log and the sink's
+	// error wrapper must have run, or nothing was exercised.
+	if !strings.Contains(blob, "signal emission failed") {
+		t.Errorf("POSITIVE CONTROL FAILED: sink-failure log never ran (runErr=%v); the leak assertion below is vacuous", runErr)
+	}
+	if !strings.Contains(blob, "evaluate signal") {
+		t.Errorf("POSITIVE CONTROL FAILED: EvaluateSink error wrapper never ran (runErr=%v); the leak assertion below is vacuous", runErr)
+	}
+	assertNoCanary(t, blob, "EvaluateSink failure path")
+}
+
+// TestNoTokenLeak_PollCycleFailurePath drives a poll-cycle FAILURE through
+// run(): the tenant's Link header points at a hostile host, so FetchLogs
+// returns ErrUnsafeNextURL, PollOnce fails, and Run logs "poll cycle failed"
+// with the error — the channel re-review found uncovered.
+func TestNoTokenLeak_PollCycleFailurePath(t *testing.T) {
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<http://evil.invalid.example/api/v1/logs?after=x>; rel="next"`)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer tenant.Close()
+
+	c, logger, stop := startCapture(t)
+	defer stop()
+
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	cfg := &Config{
+		StateFile:    statePath,
+		OktaBaseURL:  tenant.URL,
+		OktaToken:    canaryOktaToken,
+		Limit:        100,
+		MaxPages:     5,
+		Once:         true,
+		PollInterval: 10 * time.Millisecond,
+		Timeout:      2 * time.Second,
+	}
+
+	runErr := run(context.Background(), cfg, logger)
+	stop()
+	blob := c.everything(t, statePath, runErr)
+
+	if !strings.Contains(blob, "poll cycle failed") {
+		t.Errorf("POSITIVE CONTROL FAILED: poll-failure log never ran (runErr=%v); the leak assertion below is vacuous", runErr)
+	}
+	assertNoCanary(t, blob, "poll cycle failure path")
+}

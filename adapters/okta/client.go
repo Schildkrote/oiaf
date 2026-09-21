@@ -198,11 +198,25 @@ type Client struct {
 // NewClient builds a System Log client. The token is held in memory only and
 // is sent as the SSWS Authorization header on every request. It is never
 // logged and never rendered in errors.
+//
+// SECURITY — redirects are refused outright. net/http follows 3xx
+// transparently, which would bypass the host:port pinning validateNextURL
+// applies to Link-header hops: a redirect to the same hostname on a DIFFERENT
+// port is enough to carry the SSWS token to a listener the operator never
+// pinned. Okta's System Log API paginates with Link headers, not 3xx, so
+// there is no legitimate redirect to support here. ErrUseLastResponse makes
+// the client return the 3xx untouched, and doFetchPage's status switch turns
+// it into a non-retryable "unexpected status" error.
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	return &Client{
-		baseURL:    strings.TrimSuffix(baseURL, "/"),
-		token:      token,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+		token:   token,
+		httpClient: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		maxBackoff: 60 * time.Second,
 	}
 }
