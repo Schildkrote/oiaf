@@ -214,6 +214,19 @@ type Client struct {
 // much attacker-chosen text can travel inside an error string.
 const maxErrBodyBytes = 512
 
+// maxErrWindowBytes caps how many bytes safeErrSnippet reads BEFORE truncation.
+// The window must exceed maxErrBodyBytes by at least one token length so a
+// credential straddling the cap is fully inside the redacted region (BL-1a); the
+// ceiling stops a hostile endpoint from making the adapter buffer an unbounded
+// prefix of its response.
+const maxErrWindowBytes = 4096
+
+// minTokenPrefixLen is the shortest proper prefix of the credential that
+// safeErrSnippet will strip from a retained tail. Below this a "prefix" is one or
+// two characters - not credential material, and stripping it would mangle
+// legitimate diagnostics.
+const minTokenPrefixLen = 4
+
 // sanitizeServerBody renders a server-supplied error body safe to embed in an
 // error string that callers log.
 //
@@ -326,18 +339,82 @@ func truncateToRuneBoundary(b []byte, max int) []byte {
 	return b[:end]
 }
 
+// redactToken strips the client's own credential from ANY string the adapter is
+// about to embed in an error message, audit record or log line. It is the single
+// chokepoint for the BL-1 class (CWE-532: credentials written to logs).
+//
+// The threat model is a hostile or compromised Okta endpoint that reflects the
+// Authorization header it just received back into material the adapter puts in an
+// error: the body (round 4), a Link header target (round 5), or a transport-level
+// message quoting that header (round 5). Those are the same capability and the
+// same leak, arrived at through different surfaces, so they are redacted through
+// one function rather than three ad-hoc ReplaceAll calls.
+//
+// Every call site MUST go through this helper. A site that formats
+// server-controlled material into an error without calling redactToken is a
+// BL-1-class leak regardless of how correct the rest of the adapter is.
+func (c *Client) redactToken(s string) string {
+	if c.token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.token, "[redacted]")
+}
+
 // safeErrSnippet builds the diagnostic fragment for an error response: the body
-// is rune-truncated, sanitized, the client's own token is redacted, and the
-// result is trimmed. The explicit token replacement is belt-and-braces on top of
-// sanitizeServerBody: sanitizing defeats log forging and control-char tricks, but
-// it cannot recognise a REFLECTED REAL CREDENTIAL, and that is the channel the
-// round-4 review reproduced.
+// is sanitized, the client's own token is redacted, THEN the result is
+// rune-truncated to the cap and trimmed.
+//
+// ORDER MATTERS AND IS A SECURITY PROPERTY, NOT A STYLE CHOICE. Redaction runs
+// BEFORE truncation, over a read window large enough to contain a token that
+// straddles the cap. The previous implementation truncated first and redacted
+// after, which is exploitable: an attacker who controls the body places the
+// reflected credential so that it straddles the 512-byte boundary. The truncation
+// then removes the token's final character, the whole-token ReplaceAll no longer
+// matches anything, and the surviving 24 of 25 characters are written to the error
+// string, the slog record and stdout. For a real ~40-char SSWS token 39 of 40
+// characters survive at a known position - practical full credential recovery.
+// Reading maxErrBodyBytes+len(token) bytes and redacting before the cut closes it
+// for every offset the attacker can choose.
 func (c *Client) safeErrSnippet(resp *http.Response) string {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBodyBytes))
-	body = truncateToRuneBoundary(body, maxErrBodyBytes)
-	s := sanitizeServerBody(body)
+	// Window = cap + token length, so a token straddling the cap is fully inside
+	// the bytes we redact over. Bounded by a hard ceiling to keep a hostile
+	// endpoint from making us buffer an unbounded prefix.
+	window := maxErrBodyBytes
+	if c.token != "" && c.token != "[redacted]" {
+		window += len(c.token)
+	}
+	if window > maxErrWindowBytes {
+		window = maxErrWindowBytes
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(window)))
+
+	// 1. Redact the whole token over the WIDER window, before any cut.
+	s := c.redactToken(string(body))
+
+	// 2. Sanitize (defeats log forging, control chars, invalid UTF-8).
+	s = sanitizeServerBody([]byte(s))
+
+	// 3. Only now truncate to the published cap, on a rune boundary.
+	s = string(truncateToRuneBoundary([]byte(s), maxErrBodyBytes))
+
+	// 4. Re-redact: sanitizing can rewrite bytes (e.g. invalid sequences become
+	// U+FFFD) and truncation can cut a redaction marker's neighbour, so assert the
+	// invariant once more on the exact string being returned. Cheap, and it makes
+	// "no token leaves this function" true by construction rather than by ordering
+	// argument.
+	s = c.redactToken(s)
+
+	// 5. A straddling token whose tail was cut can still leave a PROPER PREFIX of
+	// the credential in the output. Trim any retained tail that is a prefix of the
+	// token, longest first, so partial-credential recovery is impossible even if a
+	// future change reorders the steps above.
 	if c.token != "" {
-		s = strings.ReplaceAll(s, c.token, "[redacted]")
+		for n := len(c.token) - 1; n >= minTokenPrefixLen; n-- {
+			if strings.HasSuffix(s, c.token[:n]) {
+				s = s[:len(s)-n] + "[redacted]"
+				break
+			}
+		}
 	}
 	return strings.TrimSpace(s)
 }
@@ -453,19 +530,29 @@ var ErrUnsafeNextURL = errors.New("okta: refusing to follow pagination link")
 //
 // Anything else is rejected rather than silently followed.
 func (c *Client) validateNextURL(raw string) (string, error) {
+	// BL-1b: `raw` is attacker-chosen Link-header content and `next.Host` is
+	// derived from it. A hostile endpoint that received our Authorization header
+	// can echo the credential back as the link target - bare, or as a hostname -
+	// and the refusal message would then carry the live token into the returned
+	// error, the slog record and stdout. Same capability and same leak as BL-1,
+	// different surface, so every site that quotes server-controlled link material
+	// goes through redactToken. url.Parse's own error text can also quote the
+	// input, so it is redacted too.
 	next, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return "", fmt.Errorf("%w: unparseable %q: %v", ErrUnsafeNextURL, raw, err)
+		return "", fmt.Errorf("%w: unparseable %q: %v", ErrUnsafeNextURL,
+			c.redactToken(raw), c.redactToken(err.Error()))
 	}
 	base, err := url.Parse(c.baseURL)
 	if err != nil {
 		return "", fmt.Errorf("%w: base URL is invalid: %v", ErrUnsafeNextURL, err)
 	}
 	if next.Host == "" {
-		return "", fmt.Errorf("%w: missing host in %q", ErrUnsafeNextURL, raw)
+		return "", fmt.Errorf("%w: missing host in %q", ErrUnsafeNextURL, c.redactToken(raw))
 	}
 	if next.Host != base.Host {
-		return "", fmt.Errorf("%w: host %q is not the configured tenant %q", ErrUnsafeNextURL, next.Host, base.Host)
+		return "", fmt.Errorf("%w: host %q is not the configured tenant %q", ErrUnsafeNextURL,
+			c.redactToken(next.Host), base.Host)
 	}
 	if next.Scheme == "https" {
 		return next.String(), nil
@@ -537,7 +624,12 @@ func (c *Client) doFetchPage(ctx context.Context, pageURL string) ([]LogEvent, s
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, "", 0, &transientError{err: err}
+		// BL-1b corollary: Go's transport surfaces malformed response headers in its
+		// error text, e.g. `malformed MIME header line: "Link: <\x7fhttps://..."`.
+		// A hostile endpoint can put the reflected credential in a header it then
+		// makes unparseable, so the transport error is server-controlled material
+		// too and must be redacted before it reaches the poller's logger.
+		return nil, "", 0, &transientError{err: errors.New(c.redactToken(err.Error()))}
 	}
 	defer resp.Body.Close()
 
