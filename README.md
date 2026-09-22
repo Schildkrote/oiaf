@@ -9,9 +9,10 @@
 > Risk-based access control and MFA orchestration for hybrid identity.
 
 > [!WARNING]
-> **Experimental / v0.1 scaffold.** OIAF is pre-release software. Interfaces, data formats, and
-> behavior may change without notice. Do not deploy in production without
-> independent security review.
+> **Experimental / pre-release (current tag: `v0.2.1-security`).** OIAF is pre-release
+> software. Interfaces, data formats, and behavior may change without notice. Do not
+> deploy in production without independent security review. The v0.2.x tags mark
+> security fixes and merged MFA work, not a stability promise.
 
 > [!NOTE]
 > OIAF is an independent open-source project. It is not affiliated with or
@@ -25,11 +26,14 @@ cloud identity providers, and machine identities.
 
 Nothing in production — yet. OIAF targets the same problem space as commercial
 identity-security platforms (Silverfort, CyberArk, Delinea, Duo, Okta,
-Microsoft Entra ID Protection and others), but it is a v0.1 scaffold: the PAM
+Microsoft Entra ID Protection and others), but it is pre-release: the PAM
 enforcement path is real and packaged, TOTP/push MFA are functional, WebAuthn
-is in progress, and the cloud-IdP adapters are design-stage skeletons. For an
-honest, capability-by-capability comparison against the commercial market —
-including what each maturity level does and does not replace for you — see
+ceremonies are implemented and tested (29 test functions across the MFA and API
+layers — against a **software** authenticator, not a hardware key), and the
+cloud-IdP adapters are design-stage skeletons. Storage is still in-memory only,
+so nothing survives a restart. For an honest, capability-by-capability comparison
+against the commercial market — including what each maturity level does and does
+not replace for you — see
 **[OIAF vs commercial identity security](https://schildkrote.github.io/oiaf/comparison/)**
 ([docs/comparison.md](docs/comparison.md)).
 
@@ -80,6 +84,8 @@ make dev
 - Policy engine (declarative access policies)
 - Risk engine (contextual risk scoring)
 - TOTP and push MFA
+- WebAuthn/passkey ceremonies (registration + assertion), tested against a software
+  authenticator; hardware-key validation is still an open gate
 - Audit logging with hash chain
 - Adapter SDK with reference skeletons (**RADIUS/LDAP/Okta/Entra/Duo/webhook stubs exit 1**)
 - **Storage today: MemoryStore only.** `OIAF_DATABASE_URL` / compose Postgres+Redis are **not** wired into a Postgres backend yet

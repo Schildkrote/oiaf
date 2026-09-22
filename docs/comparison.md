@@ -2,7 +2,7 @@
 
 This page compares OIAF's capabilities — as they exist **in this repository today** —
 against the commercial identity-security products that solve the same problems. It is
-written to be honest: OIAF is a v0.1 scaffold, not a finished product. Where a
+written to be honest: OIAF is pre-release software (current tag `v0.2.1-security`), not a finished product. Where a
 capability is real, functional, in progress, or only designed, the tables say so.
 
 !!! warning "Not a drop-in replacement yet"
@@ -41,7 +41,7 @@ capability is real, functional, in progress, or only designed, the tables say so
 | --- | --- | --- | --- |
 | TOTP (RFC 6238) | **Functional** — implemented with unit tests | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Per-user MFA licensing for straightforward TOTP deployments on systems OIAF can actually reach (today: Linux PAM, dev/test). |
 | Push MFA | **Functional** — implemented with unit tests; requires a companion push app you operate | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Push licensing — but you must supply/host the push endpoint; there is no polished consumer app. |
-| WebAuthn / FIDO2 | **In progress** — type definitions exist; factor implementation is not complete | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | Nothing yet. Do not plan a phishing-resistant rollout on OIAF today. |
+| WebAuthn / FIDO2 | **Implemented, software-authenticator tested** — registration and assertion ceremonies are in `core/internal/mfa/webauthn.go` with 29 test functions across the MFA and API layers, plus a `webauthntest` helper. **Hardware-key validation is an open gate:** the suite exercises a software authenticator, so a physical YubiKey-class key has not been proven end to end. | Duo, RSA SecurID Access, IBM Verify, ForgeRock AM | WebAuthn factor licensing for deployments you can test with a software authenticator. Do **not** plan a phishing-resistant rollout on OIAF until hardware-key validation is demonstrated and durable storage exists (see below). |
 
 ### Linux PAM inline enforcement & sshd step-up
 
@@ -78,7 +78,7 @@ capability is real, functional, in progress, or only designed, the tables say so
 ## Honest bottom line
 
 - **What is genuinely usable now (in dev/test):** the decision API, rule-based risk engine, TOTP/push factors, the Linux PAM helper with its packaging and field-test script, the read-only AD inventory scanner, and the hash-chained audit design.
-- **What is not:** WebAuthn (in progress), the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only), identity graph analytics (roadmap), and every cloud-IdP adapter — Okta, Entra ID, and Duo adapters are design-stage skeletons that exit with an error.
+- **What is not:** WebAuthn against real hardware keys (the ceremonies are implemented and tested with a software authenticator; physical-key validation is an open gate), the Windows dc-agent and digital-fencing story (design-stage/roadmap), durable audit storage (in-memory only — nothing survives a restart), identity graph analytics (roadmap), and every cloud-IdP adapter — Okta, Entra ID, and Duo adapters are design-stage skeletons that exit with an error.
 - **What OIAF will realistically replace for you today:** nothing in production. It is a foundation you can audit, extend, and experiment with — AGPL-licensed, with an architecture that targets the same problem space as the vendors above.
 
 If you evaluate OIAF against a commercial product, treat this page as the claim
