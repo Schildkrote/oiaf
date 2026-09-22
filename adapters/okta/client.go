@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // LogEvent is the subset of an Okta System Log event
@@ -207,6 +209,139 @@ type Client struct {
 // there is no legitimate redirect to support here. ErrUseLastResponse makes
 // the client return the 3xx untouched, and doFetchPage's status switch turns
 // it into a non-retryable "unexpected status" error.
+// maxErrBodyBytes bounds how much of a server error body is kept for diagnosis.
+// The body is tenant/proxy-controlled; capping it limits both log noise and how
+// much attacker-chosen text can travel inside an error string.
+const maxErrBodyBytes = 512
+
+// sanitizeServerBody renders a server-supplied error body safe to embed in an
+// error string that callers log.
+//
+// Ported from tools/adapter-sdk/client.go (PR #23), which closed this exact class
+// for the shared SDK. This adapter keeps its own copy because it is a standalone
+// binary: it cannot import the SDK's unexported helper, and duplicating the
+// fifteen-line function is cheaper than a new shared package for one caller. If a
+// third component ever needs it, extract it then.
+//
+// Why: the body is attacker-controlled. A hostile or misconfigured endpoint (or a
+// proxy in front of it) can return anything, including the real Authorization
+// header echoed back in a verbose error, or text crafted to look like a
+// credential. Either string would land verbatim in the error, get logged by
+// Poller.Run, and leak the token into log aggregation (CWE-532) or defeat
+// canary-based leak tests. The round-4 independent review REPRODUCED the first:
+// a 401 whose JSON body echoed the SSWS token, which then appeared in captured
+// slog output.
+//
+// Control characters are dropped entirely (no newlines, tabs, NULs, ANSI escapes,
+// bidi overrides); the caller rune-truncates the result.
+func sanitizeServerBody(data []byte) string {
+	out := make([]rune, 0, len(data))
+	for _, r := range string(data) {
+		switch {
+		case r == '\t', r == '\n', r == '\r':
+			// Preserve the rough shape of the text but break any line structure.
+			out = append(out, ' ')
+		case r < 0x20 || r == 0x7f:
+			// C0 controls, NUL, DEL: drop.
+			continue
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+			// Unicode control/format chars, incl. ESC and bidi overrides: drop.
+			continue
+		default:
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
+
+// truncateToRuneBoundary returns at most max bytes of b, cut so that the result
+// is a valid-UTF-8 PREFIX of b. Valid under-cap input is returned unchanged;
+// invalid bytes are cut away at the first undecodable position.
+//
+// History, kept because the bug it records is the reason for the shape of this
+// function. This was first written as a hand transcription of the SDK's
+// truncateToRuneBoundary (tools/adapter-sdk/client.go, PR #23). THE TRANSCRIPTION
+// WAS WRONG, NOT THE ORIGINAL: it dropped the "+1" from the SDK's
+// len(b)-i+1 < size completeness check and returned b[:i] instead of b[:i-1],
+// keeping the orphan lead byte. An exhaustive sweep over every rune-width
+// alignment showed the copy emitted invalid UTF-8 whenever the cap split a
+// multi-byte rune - 4 of 8 hand-written cases, 456 of 781 generated ones. The
+// SDK version is correct and passes its own split-rune tests; only this file's
+// copy was broken. A first repair added explicit checks for stray continuation
+// and 0xF8-0xFF lead bytes; that failed too, because a RUN of invalid bytes needs
+// the same treatment recursively. Enumerating byte classes is the wrong shape for
+// this problem, and hand-copying a subtle bit-twiddling helper is how the bug
+// arrived in the first place.
+//
+// So this version does not classify bytes at all. It walks forward with
+// utf8.DecodeRune - which already implements the UTF-8 grammar correctly - and
+// keeps the end offset of the last COMPLETE valid rune that fits under the cap.
+// Nothing to enumerate, therefore no alignment to miss. It also diverges from the
+// SDK deliberately in one respect: the SDK keeps an invalid lead byte and lets
+// sanitizeServerBody handle it, whereas this returns the valid prefix. Both are
+// safe; the prefix form is simpler to reason about and is what the tests below
+// pin.
+//
+// Invalid input: the scan stops at the first byte that does not begin a valid
+// rune, so a body that is binary garbage yields an empty (still valid) prefix
+// rather than propagating invalid bytes into a logged error string. That is a
+// deliberate loss of diagnostics, and an acceptable one: the status code is the
+// primary diagnostic and survives in the caller's error, while unreadable bytes
+// carry none. Repairing invalid bytes rather than dropping them is
+// sanitizeServerBody's job - it runs after this and maps them to U+FFFD - so
+// this helper does not need to be a validator.
+func truncateToRuneBoundary(b []byte, max int) []byte {
+	if max <= 0 {
+		return b[:0]
+	}
+	// NOTE: there is deliberately NO "len(b) <= max, return b unchanged" early
+	// return here, and the SDK version HAS one. That difference is intentional and
+	// comes from the differing call sites, not from a disagreement about the
+	// helper. The SDK reads the whole body under a 1 MiB success cap and then
+	// truncates to 512, so len(data) <= max only when the server sent a short,
+	// COMPLETE body that cannot end mid-rune - the early return is harmless there.
+	// THIS adapter reads through io.LimitReader(resp.Body, maxErrBodyBytes), so the
+	// body arrives capped at exactly max bytes and CAN be split mid-rune. Under
+	// that call site the same early return fires on every call and makes the
+	// function a complete no-op: the one case it exists for is never repaired, and
+	// the split bytes reach sanitizeServerBody and come back as U+FFFD replacement
+	// characters in the logged error. Always scanning is O(max) over at most 512
+	// bytes, which is nothing next to the network call that produced the body.
+	end := 0
+	limit := max
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; {
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size <= 1 {
+			break // invalid byte: keep the valid prefix gathered so far
+		}
+		if i+size > limit {
+			break // complete rune, but it would cross the cap
+		}
+		i += size
+		end = i
+	}
+	return b[:end]
+}
+
+// safeErrSnippet builds the diagnostic fragment for an error response: the body
+// is rune-truncated, sanitized, the client's own token is redacted, and the
+// result is trimmed. The explicit token replacement is belt-and-braces on top of
+// sanitizeServerBody: sanitizing defeats log forging and control-char tricks, but
+// it cannot recognise a REFLECTED REAL CREDENTIAL, and that is the channel the
+// round-4 review reproduced.
+func (c *Client) safeErrSnippet(resp *http.Response) string {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBodyBytes))
+	body = truncateToRuneBoundary(body, maxErrBodyBytes)
+	s := sanitizeServerBody(body)
+	if c.token != "" {
+		s = strings.ReplaceAll(s, c.token, "[redacted]")
+	}
+	return strings.TrimSpace(s)
+}
+
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
@@ -412,15 +547,18 @@ func (c *Client) doFetchPage(ctx context.Context, pageURL string) ([]LogEvent, s
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		// Include a snippet of the body (Okta error code) but never request
 		// headers — they carry the token.
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, "", 0, fmt.Errorf("%w: status %d: %s", ErrAuth, resp.StatusCode, strings.TrimSpace(string(body)))
+		// The BODY is tenant/proxy controlled and can echo the Authorization
+		// header back; safeErrSnippet sanitizes, rune-truncates and redacts the
+		// token before the snippet enters this error (round-4 review BL-1).
+		return nil, "", 0, fmt.Errorf("%w: status %d: %s", ErrAuth, resp.StatusCode, c.safeErrSnippet(resp))
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return nil, "", retryAfter(resp), &transientError{err: errors.New("okta: rate limited (429)")}
 	case resp.StatusCode >= 500:
 		return nil, "", 0, &transientError{err: fmt.Errorf("okta: server error %d", resp.StatusCode)}
 	default:
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, "", 0, fmt.Errorf("okta: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// Same channel as the 401/403 case; this default branch also covers
+		// refused 3xx responses, whose body a hostile redirect target controls.
+		return nil, "", 0, fmt.Errorf("okta: unexpected status %d: %s", resp.StatusCode, c.safeErrSnippet(resp))
 	}
 
 	var events []LogEvent
