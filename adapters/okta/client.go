@@ -354,10 +354,7 @@ func truncateToRuneBoundary(b []byte, max int) []byte {
 // server-controlled material into an error without calling redactToken is a
 // BL-1-class leak regardless of how correct the rest of the adapter is.
 func (c *Client) redactToken(s string) string {
-	if c.token == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, c.token, "[redacted]")
+	return redactCredential(s, c.token)
 }
 
 // safeErrSnippet builds the diagnostic fragment for an error response: the body
@@ -560,7 +557,13 @@ func (c *Client) validateNextURL(raw string) (string, error) {
 	if next.Scheme == "http" && isLoopbackHost(next.Hostname()) {
 		return next.String(), nil
 	}
-	return "", fmt.Errorf("%w: scheme %q is not permitted (https required; http only on loopback)", ErrUnsafeNextURL, next.Scheme)
+	return "", fmt.Errorf("%w: scheme %q is not permitted (https required; http only on loopback)", ErrUnsafeNextURL,
+		// BL-3: the scheme comes from url.Parse, which LOWERCASES it. A hostile
+		// endpoint that puts the token in the scheme position therefore hands back
+		// a case-folded credential, and exact-match ReplaceAll cannot see it. This
+		// is the site that made case-insensitive matching a requirement rather than
+		// a nicety.
+		c.redactToken(next.Scheme))
 }
 
 // isLoopbackHost reports whether a host refers to the local machine. Used to
@@ -656,7 +659,21 @@ func (c *Client) doFetchPage(ctx context.Context, pageURL string) ([]LogEvent, s
 	var events []LogEvent
 	dec := json.NewDecoder(io.LimitReader(resp.Body, 16<<20))
 	if err := dec.Decode(&events); err != nil {
-		return nil, "", 0, &transientError{err: fmt.Errorf("okta: decode page: %w", err)}
+		// BL-2: a json decode error quotes the offending input — server-controlled
+		// bytes that may contain the reflected credential, e.g.
+		// `json: cannot unmarshal string into Go value of type ...` preceded by the
+		// raw payload fragment. redactToken is the same fix as the body/Link/
+		// transport sites.
+		//
+		// %s, NOT %w. Redacting a string and preserving the wrap chain are mutually
+		// exclusive: the whole point is to stop quoting the original error's text,
+		// so the returned error cannot also BE that error. The chain is already
+		// flattened the same way at the transport-error site above, and nothing
+		// unwraps this error — the sentinel checks in this package are ErrAuth,
+		// ErrTooManyPages and os.ErrNotExist, none of which can appear inside a json
+		// decode failure. isRetryable still works, since it matches the
+		// *transientError wrapper rather than the cause.
+		return nil, "", 0, &transientError{err: fmt.Errorf("okta: decode page: %s", c.redactToken(err.Error()))}
 	}
 	return events, nextLink(resp.Header.Get("Link")), 0, nil
 }

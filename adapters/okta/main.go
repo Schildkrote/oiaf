@@ -23,13 +23,43 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// The credential scrubber is installed BEFORE any logging happens, because the
+	// first thing this process can do is fail — and a config-load failure is
+	// exactly the kind of error string that can echo the token it failed to parse.
+	//
+	// The token is resolved here from the same precedence loadConfig uses
+	// (OIAF_OKTA_TOKEN, then OKTA_API_TOKEN) so the scrubber is live even when
+	// loadConfig itself is what fails. loadConfig may still fill the token in from
+	// the YAML config file afterwards; rebindRedaction below keeps the scrubber
+	// pointed at whatever token ends up actually being used.
+	//
+	// INVARIANT THIS RELIES ON: cfg.OktaToken is assigned only during loadConfig
+	// and never refreshed at runtime (no OAuth token rotation in this adapter), so
+	// a closure capturing a string is not a staleness hazard. If the adapter ever
+	// grows token refresh, this must become a func() string indirection instead —
+	// a captured stale token would silently stop redacting, which is a failure that
+	// looks like success.
+	tokenNow := envOr("OIAF_OKTA_TOKEN", os.Getenv("OKTA_API_TOKEN"))
+	redact := func(s string) string { return redactCredential(s, tokenNow) }
+
+	handler := newRedactingHandler(
+		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		redact)
+	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
 	cfg, err := loadConfig()
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
+	}
+
+	// The YAML config file may have supplied a token the env did not. Rebind the
+	// logger's scrubber to the token actually in use, so nothing downstream logs
+	// against a credential the scrubber does not know about.
+	if cfg.OktaToken != tokenNow {
+		logger = rebindRedaction(logger, cfg.OktaToken)
+		slog.SetDefault(logger)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -39,6 +69,21 @@ func main() {
 		logger.Error("adapter error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// rebindRedaction rebuilds a logger whose handler scrubs `token` instead of the
+// token captured at startup. It returns the original logger unchanged when the
+// handler is not one of ours, so a caller that swapped in its own handler is
+// never silently wrapped twice.
+func rebindRedaction(logger *slog.Logger, token string) *slog.Logger {
+	h, ok := logger.Handler().(*redactingHandler)
+	if !ok {
+		return logger
+	}
+	return slog.New(&redactingHandler{
+		inner:  h.inner,
+		redact: func(s string) string { return redactCredential(s, token) },
+	})
 }
 
 func run(ctx context.Context, cfg *Config, logger *slog.Logger) error {
