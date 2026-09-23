@@ -1,0 +1,193 @@
+# Test data for the AD-emulation inventory integration test.
+#
+# Each entry exercises one classification path in scanner.go. The values are chosen so
+# that a defect produces a WRONG COUNT rather than a crash — the failure mode that
+# shipped in the stale-account and privileged-account summaries.
+#
+# FILETIME values are 100ns ticks since 1601-01-01 UTC:
+#   132223104000000000 = 2020-01-01T00:00:00Z   (ancient -> stale)
+#   9223372036854775807 = "never"               (must NOT be stale)
+#   0 = never logged on                         (must NOT be stale)
+# The "recent" value is computed at container start by run-integration.sh and
+# substituted for __RECENT_FILETIME__, because staleness is relative to now.
+
+dn: dc=corp,dc=example,dc=com
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: OIAF Test Corp
+dc: corp
+
+dn: cn=admin,dc=corp,dc=example,dc=com
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: admin
+userPassword: test-admin-password
+
+# --- groups ---------------------------------------------------------------
+dn: cn=Domain Admins,ou=Groups,dc=corp,dc=example,dc=com
+objectClass: adGroup
+cn: Domain Admins
+description: RID 512
+
+dn: cn=Backup Operators,ou=Groups,dc=corp,dc=example,dc=com
+objectClass: adGroup
+cn: Backup Operators
+description: RID 551 - SeBackupPrivilege reads any file regardless of ACL
+
+dn: cn=Admin-Assistants,ou=Groups,dc=corp,dc=example,dc=com
+objectClass: adGroup
+cn: Admin-Assistants
+description: name contains "admin" but grants nothing - must NOT be flagged
+
+dn: cn=Domain Users,ou=Groups,dc=corp,dc=example,dc=com
+objectClass: adGroup
+cn: Domain Users
+
+dn: ou=Groups,dc=corp,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Groups
+
+dn: ou=Staff,dc=corp,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Staff
+
+dn: ou=Service Accounts,dc=corp,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Service Accounts
+
+dn: ou=Workstations,dc=corp,dc=example,dc=com
+objectClass: organizationalUnit
+ou: Workstations
+
+# --- accounts -------------------------------------------------------------
+# 1. Ordinary enabled user, logged on recently. Not stale, not privileged.
+dn: cn=jdoe,ou=Staff,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: jdoe
+sn: Doe
+displayName: Jane Doe
+sAMAccountName: jdoe
+userAccountControl: 512
+objectSid: S-1-5-21-111-222-333-1001
+primaryGroupID: 513
+lastLogonTimestamp: __RECENT_FILETIME__
+memberOf: cn=Domain Users,ou=Groups,dc=corp,dc=example,dc=com
+
+# 2. Privileged via memberOf DN (Domain Admins). This is the path the dead
+#    RID-suffix branch could never take; the name match must catch it.
+dn: cn=domadmin,ou=Staff,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: domadmin
+sn: Admin
+displayName: Domain Admin
+sAMAccountName: domadmin
+userAccountControl: 512
+objectSid: S-1-5-21-111-222-333-500
+primaryGroupID: 513
+lastLogonTimestamp: __RECENT_FILETIME__
+memberOf: cn=Domain Admins,ou=Groups,dc=corp,dc=example,dc=com
+memberOf: cn=Domain Users,ou=Groups,dc=corp,dc=example,dc=com
+
+# 3. Privileged via primaryGroupID ONLY - not listed in memberOf. This entry can
+#    only be classified correctly if primaryGroupID is in the REQUESTED attribute
+#    list, which is defect F4. A unit test cannot catch this.
+dn: cn=backupop,ou=Staff,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: backupop
+sn: Operator
+displayName: Backup Operator
+sAMAccountName: backupop
+userAccountControl: 512
+objectSid: S-1-5-21-111-222-333-1002
+primaryGroupID: 551
+lastLogonTimestamp: __RECENT_FILETIME__
+
+# 4. Disabled account with an ancient last-logon. Must count as BOTH disabled and
+#    stale, and the stale verdict depends on parseFileTime not overflowing (F1).
+dn: cn=old_svc,ou=Service Accounts,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: old_svc
+sn: Service
+displayName: Legacy Service Account
+sAMAccountName: old_svc
+userAccountControl: 514
+objectSid: S-1-5-21-111-222-333-1003
+primaryGroupID: 513
+lastLogonTimestamp: 132223104000000000
+memberOf: cn=Domain Users,ou=Groups,dc=corp,dc=example,dc=com
+
+# 5. Never logged on. Zero/never FILETIME must NOT be reported as stale - the
+#    distinction between "unknown" and "old" is what keeps the stale count useful.
+dn: cn=never_used,ou=Staff,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: never_used
+sn: Unused
+displayName: Never Used
+sAMAccountName: never_used
+userAccountControl: 512
+objectSid: S-1-5-21-111-222-333-1004
+primaryGroupID: 513
+lastLogonTimestamp: 9223372036854775807
+
+# 6. Service account with SPNs -> counts as a service account.
+dn: cn=svc_sql,ou=Service Accounts,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: svc_sql
+sn: SQL
+displayName: SQL Service
+sAMAccountName: svc_sql
+userAccountControl: 66048
+objectSid: S-1-5-21-111-222-333-1005
+primaryGroupID: 513
+lastLogonTimestamp: __RECENT_FILETIME__
+servicePrincipalName: MSSQLSvc/db01.corp.example.com:1433
+servicePrincipalName: MSSQLSvc/db02.corp.example.com
+
+# 7. gMSA -> service account via the msDS-GroupMSAMembership marker.
+dn: cn=svc_gmsa,ou=Service Accounts,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: svc_gmsa
+sn: GMSA
+displayName: Group Managed Service Account
+sAMAccountName: svc_gmsa$
+userAccountControl: 66048
+objectSid: S-1-5-21-111-222-333-1006
+primaryGroupID: 513
+lastLogonTimestamp: __RECENT_FILETIME__
+msDS-GroupMSAMembership: O:NSG:BG:S-1-5-21-111:D:(A;;RC;;;S-1-5-21-222)
+
+# 8. Computer account with an SPN -> counts as computer AND service account.
+dn: cn=SRV01,ou=Workstations,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: computer
+cn: SRV01
+sn: SRV01
+sAMAccountName: SRV01$
+userAccountControl: 4096
+objectSid: S-1-5-21-111-222-333-1007
+primaryGroupID: 515
+lastLogonTimestamp: __RECENT_FILETIME__
+servicePrincipalName: WSMAN/SRV01.corp.example.com
+
+# 9. Group whose NAME contains "admin" but grants nothing. A loose substring match
+#    would flag this as privileged; it must not be.
+dn: cn=assistant,ou=Staff,dc=corp,dc=example,dc=com
+objectClass: inetOrgPerson
+objectClass: user
+cn: assistant
+sn: Assistant
+displayName: Admin Assistant
+sAMAccountName: assistant
+userAccountControl: 512
+objectSid: S-1-5-21-111-222-333-1008
+primaryGroupID: 513
+lastLogonTimestamp: __RECENT_FILETIME__
+memberOf: cn=Admin-Assistants,ou=Groups,dc=corp,dc=example,dc=com

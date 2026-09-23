@@ -83,10 +83,17 @@ are needed in `monitor` mode.
 
 ## Roadmap
 
-- [x] EvtSubscribe real-time event capture (Windows)
-- [x] Event XML parsing for all 8 event IDs
+- [x] EvtSubscribe real-time event capture (Windows) — implemented against
+      `wevtapi.dll` and cross-compiles for `GOOS=windows`, but **has never been
+      executed on a real domain controller**. All 13 tests are offline. Treat as
+      unproven until the M4 VM validation in the roadmap runs.
+- [x] Event XML parsing for **10** event IDs (4624, 4625, 4648, 4672, 4768, 4769,
+      4771, 4776, 2887, 2889). The `DC_AGENT_EVENT_IDS` default subscribes to 8 of
+      them; 2887/2889 (NTLM) are parsed when present but not subscribed by default.
 - [x] Batch buffering and HTTP sender
-- [x] Integration with OIAF discovery engine
+- [x] Events reach the OIAF discovery engine via `/v1/ad/events` — but the engine's
+      decisions are **not consumed by anything yet**. Detection without enforcement:
+      see the unchecked item below.
 - [ ] AD inventory scan on startup (requires LDAP config)
 - [ ] AD response action triggering (enforcement mode: response)
 - [ ] WFP filter updates (enforcement mode: wfp)
