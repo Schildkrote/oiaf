@@ -55,9 +55,28 @@ const minTokenFragmentLen = 8
 // unknown if a fragment does get through. Any run long enough that fewer than this
 // many characters stay secret is stripped.
 //
-// 12 characters from a ~62-symbol token alphabet is ~71 bits — offline
-// brute-force is infeasible. That is the property being enforced, so it is stated
-// as a property rather than as a fragment length.
+// THE ARITHMETIC, WORKED OUT for a real Okta SSWS token. Format is
+// ^00[a-zA-Z0-9\-_]{40}$ (Okta developer documentation): 42 characters total, of
+// which the last 40 are secret drawn from a 64-symbol alphabet.
+//
+//	threshold        = N - bound + 1 = 42 - 12 + 1 = 31
+//	largest run that can SURVIVE the sweep = 30  (a 31-char run IS swept)
+//	characters left unknown in that worst case  = 42 - 30 = 12
+//	64^12 = 4.7e21 = 72.0 bits
+//
+// So the guarantee is exactly `bound` unknown characters — the derivation is
+// self-consistent by construction, which is the point of deriving rather than
+// picking a number. 72 bits is infeasible for offline brute-force.
+//
+// NOTE ON A PRIOR ERROR, kept here deliberately. An earlier version of this comment
+// said "~62-symbol alphabet, ~71 bits". The bit count was roughly right by luck and
+// the ALPHABET was wrong: SSWS uses 64 symbols, not 62. Getting the alphabet wrong
+// in a comment that justifies a security threshold is how a threshold silently
+// becomes too permissive, so the derivation above is written out in full rather than
+// asserted. Round 7 review also computed a 66-bit figure by evaluating the run AT
+// the threshold (31 chars, 11 unknown); that is a valid conservative lower bound but
+// understates the guarantee, because a run of exactly the threshold is swept and
+// therefore cannot leak. Both numbers are safe to rely on; 72 is the actual one.
 const maxUnknownCharsAfterLeak = 12
 
 // fragmentThreshold returns the shortest run of `token` that must be swept from
@@ -76,10 +95,13 @@ const maxUnknownCharsAfterLeak = 12
 // (one less) would sweep a run that still leaves exactly the full bound unknown,
 // which is over-redaction — the same class of error a flat floor makes.
 //
-// It scales with the credential: a 40-character SSWS token is protected at a
-// 29-character run, a 25-character test canary at a 14-character run. Short
-// legitimate runs stay untouched in both cases, which is what the derived rule
-// buys over a flat constant.
+// It scales with the credential. A real 42-character SSWS token gets threshold 31,
+// so at most a 30-character run can survive and 12 characters stay unknown (72
+// bits, see maxUnknownCharsAfterLeak); the 25-character test canary gets threshold
+// 14, also leaving exactly 12 unknown. Short legitimate runs stay untouched in both
+// cases, which is what the derived rule buys over a flat constant — and note both
+// examples leave the SAME unknown count, which is the invariant being enforced.
+// TestBL5_EveryTokenLengthPreservesTheUnknownBound pins that for a range of lengths.
 //
 // KNOWN LIMITATION, deliberate. For a token shorter than
 // maxUnknownCharsAfterLeak+minTokenFragmentLen (20 characters here) the derived

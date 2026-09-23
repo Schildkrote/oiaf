@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -397,6 +398,103 @@ func TestBL5_RedactionIsIdempotent(t *testing.T) {
 	once = redactCredential("scheme "+strings.ToLower(canaryOktaToken)+" tail", canaryOktaToken)
 	if twice := redactCredential(once, canaryOktaToken); once != twice {
 		t.Errorf("case-folded redaction is not idempotent:\n  once:  %q\n  twice: %q", once, twice)
+	}
+}
+
+// TestBL5_EveryTokenLengthPreservesTheUnknownBound pins the property the derived
+// threshold exists to enforce: whatever the credential's length, the largest run
+// that can SURVIVE the sweep leaves at least maxUnknownCharsAfterLeak characters
+// unknown — except in the documented floor-clamped range for short tokens.
+//
+// This is the test that makes the entropy comment a claim someone can check rather
+// than prose. Round 7 review corrected a wrong alphabet in that comment (~62
+// symbols instead of the real 64 for SSWS), and the only durable defence against
+// the same class of drift is an executable check of the arithmetic.
+//
+// It also uses a REAL SSWS-shaped credential — 42 characters, `00` prefix plus 40
+// from [a-zA-Z0-9-_] — rather than only the 25-char canary, because the canary's
+// length is not what production sees and the threshold scales with length.
+func TestBL5_EveryTokenLengthPreservesTheUnknownBound(t *testing.T) {
+	// The real production shape, per Okta: ^00[a-zA-Z0-9\-_]{40}$ => 42 runes.
+	ssws := "00aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3a"
+	if n := len([]rune(ssws)); n != 42 {
+		t.Fatalf("the SSWS-shaped fixture should be 42 runes, got %d", n)
+	}
+
+	crossover := maxUnknownCharsAfterLeak + minTokenFragmentLen // 20
+	for _, tok := range []string{
+		ssws,                    // 42 runes: production shape
+		canaryOktaToken,         // 25 runes: test canary
+		strings.Repeat("z", 20), // crossover: derived rule starts to bind
+		strings.Repeat("z", 24),
+		strings.Repeat("z", 60), // longer than any real SSWS token
+	} {
+		n := len([]rune(tok))
+		th := fragmentThreshold(tok)
+		clamped := n < crossover
+		t.Run(fmt.Sprintf("len-%d", n), func(t *testing.T) {
+			// The largest run the sweep can LEAVE ALONE is th-1, so that is the
+			// worst case an attacker can extract.
+			largestSurviving := th - 1
+			unknown := n - largestSurviving
+
+			if clamped {
+				// Documented limitation: the absolute floor wins and the bound is
+				// NOT met. Assert that is the only reason, so a regression that
+				// clamps long tokens is caught.
+				if th != minTokenFragmentLen {
+					t.Errorf("a %d-rune token is below the crossover %d, so the floor "+
+						"should clamp the threshold to %d, got %d", n, crossover,
+						minTokenFragmentLen, th)
+				}
+				if unknown >= maxUnknownCharsAfterLeak {
+					t.Errorf("unexpected: a floor-clamped short token met the bound "+
+						"(%d unknown >= %d), so the crossover arithmetic in "+
+						"credential.go is wrong", unknown, maxUnknownCharsAfterLeak)
+				}
+				return
+			}
+
+			// Where the derived rule binds, the guarantee must hold EXACTLY: the
+			// worst-case surviving run leaves precisely `bound` characters unknown.
+			if unknown != maxUnknownCharsAfterLeak {
+				t.Errorf("N=%d threshold=%d: the largest surviving run (%d) leaves %d "+
+					"unknown, want exactly %d. Off-by-one here is either a leak (too "+
+					"few unknown) or over-redaction (too many).",
+					n, th, largestSurviving, unknown, maxUnknownCharsAfterLeak)
+			}
+		})
+	}
+
+	// And the production numbers stated in credential.go's comment, checked rather
+	// than asserted: threshold 31 for a 42-rune SSWS token, 12 unknown, 64 symbols.
+	if got, want := fragmentThreshold(ssws), 31; got != want {
+		t.Errorf("SSWS threshold = %d, want %d (comment in credential.go says 31)", got, want)
+	}
+	const ssweAlphabet = 64 // [a-zA-Z0-9-_]
+	unknown := len([]rune(ssws)) - (fragmentThreshold(ssws) - 1)
+	bits := float64(unknown) * math.Log2(ssweAlphabet)
+	if unknown != 12 {
+		t.Errorf("SSWS worst-case unknown chars = %d, want 12", unknown)
+	}
+	// 64^12 = 4.72e21 = 72.0 bits. Guard the comment's figure with a tolerance so a
+	// changed alphabet or bound fails the test instead of silently drifting.
+	if bits < 71.5 || bits > 72.5 {
+		t.Errorf("SSWS entropy = %.1f bits, want ~72.0 (credential.go documents 72.0; "+
+			"64^12 = 4.7e21). If the alphabet or bound changed, update the comment "+
+			"AND this check together.", bits)
+	}
+	t.Logf("SSWS: threshold=%d largest-surviving=%d unknown=%d entropy=%.1f bits",
+		fragmentThreshold(ssws), fragmentThreshold(ssws)-1, unknown, bits)
+
+	// Finally, the guarantee must be BEHAVIOURAL, not just arithmetic: a run of
+	// exactly threshold-1 survives, and one of threshold does not.
+	th := fragmentThreshold(ssws)
+	if surv := ssws[:th-1]; !strings.Contains(redactCredential("z "+surv+" z", ssws), surv) {
+		t.Errorf("a %d-rune run (one below threshold %d) was swept: over-redaction", th-1, th)
+	}
+	if at := ssws[:th]; strings.Contains(redactCredential("z "+at+" z", ssws), at) {
+		t.Errorf("a %d-rune run (at threshold) survived: leak", th)
 	}
 }
 
