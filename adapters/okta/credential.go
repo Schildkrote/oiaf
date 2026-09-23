@@ -29,6 +29,7 @@ package main
 import (
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 // minTokenFragmentLen is an absolute floor on the shortest run of credential
@@ -92,7 +93,11 @@ const maxUnknownCharsAfterLeak = 12
 // pinned by TestBL5_FragmentThresholdArithmetic so the tradeoff cannot change
 // silently.
 func fragmentThreshold(token string) int {
-	t := len(token) - maxUnknownCharsAfterLeak + 1
+	// Measured in RUNES, because the scan that consumes this threshold compares
+	// rune slices. Using len(token) here would mix units for a non-ASCII
+	// credential — the same class of byte/rune desync that caused the panic this
+	// file's scan comment describes.
+	t := len([]rune(token)) - maxUnknownCharsAfterLeak + 1
 	if t < minTokenFragmentLen {
 		return minTokenFragmentLen
 	}
@@ -132,150 +137,139 @@ func redactCredential(s, token string) string {
 		return redactedMarker
 	}
 
-	// Case-insensitive matching is only safe for ASCII credentials: strings.ToLower
-	// can change byte length for non-ASCII (e.g. 'İ'), which would desynchronise
-	// the index arithmetic that advances through the input. SSWS tokens are ASCII by
-	// construction; a non-ASCII token still gets exact, percent-encoded and
-	// case-sensitive fragment coverage.
-	fold := isASCII(token)
-	tokenFolded := token
-	lowerS := s
-	if fold {
-		tokenFolded = strings.ToLower(token)
-		lowerS = strings.ToLower(s)
+	// MATCHING IS DONE IN RUNE SPACE, NOT BYTE SPACE, AND THAT IS A PANIC FIX.
+	//
+	// The first version built a parallel folded byte string (`lowerS =
+	// strings.ToLower(s)`) and bounds-checked against len(s) while slicing lowerS.
+	// That is unsound because ToLower can CHANGE BYTE LENGTH: U+212A KELVIN SIGN is
+	// 3 bytes and folds to 'k' (1 byte), so lowerS ends up SHORTER than s and the
+	// slice runs off the end. A hostile endpoint controls the response body, so
+	// feeding it a Kelvin sign panicked the adapter — a DoS, and worse, the Go
+	// runtime prints a panic value directly to stderr, which bypasses the slog
+	// chokepoint completely. Reproduced on five distinct non-ASCII inputs before the
+	// fix.
+	//
+	// Folding in rune space cannot desynchronise: unicode.ToLower maps one rune to
+	// one rune, so the folded view is always the same LENGTH as the original and
+	// index i means the same position in both. Output is rebuilt from the ORIGINAL
+	// runes, so surrounding text keeps its case.
+	rs := []rune(s)
+	fs := make([]rune, len(rs))
+	for i, r := range rs {
+		fs[i] = unicode.ToLower(r)
 	}
 
-	needles := credentialNeedles(token, fold)
+	needles := credentialNeedles(token)
 	threshold := fragmentThreshold(token)
-	sweepFragments := threshold < len(token)
+	sweepFragments := threshold < len([]rune(token))
 
 	var b strings.Builder
 	b.Grow(len(s))
-	for i := 0; i < len(s); {
+	for i := 0; i < len(rs); {
 		// Full spellings first: a complete match is unambiguous and should win over
 		// a shorter fragment match at the same position.
-		if n := matchNeedleAt(s, lowerS, i, needles); n > 0 {
+		if n := matchNeedleAt(fs, i, needles); n > 0 {
 			b.WriteString(redactedMarker)
 			i += n
 			continue
 		}
 		if sweepFragments {
-			if n := longestTokenFragmentAt(lowerS, i, tokenFolded, threshold); n > 0 {
+			if n := longestTokenFragmentAt(fs, i, needles[0].match, threshold); n > 0 {
 				b.WriteString(redactedMarker)
 				i += n
 				continue
 			}
 		}
-		// Not credential material: copy the ORIGINAL byte, preserving the case of
+		// Not credential material: copy the ORIGINAL rune, preserving the case of
 		// all surrounding text.
-		b.WriteByte(s[i])
+		b.WriteRune(rs[i])
 		i++
 	}
 	return b.String()
 }
 
 // needle is one spelling of the credential that server-controlled text might
-// carry. `match` is compared against the case-folded input when `folded` is set,
-// so a single code path handles both the exact and the case-folded forms.
+// carry, in folded rune form so it can be compared against the folded view of the
+// input.
 type needle struct {
-	match  string
-	folded bool
+	match []rune
 }
 
-// credentialNeedles returns every spelling of `token` worth matching, longest
-// first so that a maximal match wins at any given position.
-//
-// QueryEscape and PathEscape disagree about which characters they encode (notably
-// '/' and ' '), and a credential can be reflected through either context — a query
-// value or a path segment — so both spellings are covered. Percent escapes are
-// matched case-insensitively as well, because encoders disagree on hex digit case
-// ("%2f" vs "%2F") and an attacker choosing the spelling costs them nothing.
-func credentialNeedles(token string, fold bool) []needle {
-	// The comparison string must match the folded-ness of the input view it is
-	// checked against. A needle flagged folded is compared to lowerS, so it must
-	// itself be lowercased — passing the mixed-case original would make the
-	// case-insensitive pass silently match nothing, which is exactly the kind of
-	// fix that looks present and does nothing.
-	compare := func(n string) string {
-		if fold {
-			return strings.ToLower(n)
-		}
-		return n
-	}
-	seen := map[string]bool{}
-	base := compare(token)
-	out := []needle{{match: base, folded: fold}}
-	seen[base] = true
-	for _, enc := range []string{url.QueryEscape(token), url.PathEscape(token)} {
-		if enc == token {
-			continue
-		}
-		c := compare(enc)
-		if seen[c] {
-			continue
-		}
-		seen[c] = true
-		out = append(out, needle{match: c, folded: fold})
-	}
-	// Longest first. Equal lengths keep insertion order, which puts the plain
-	// spelling ahead of the escaped ones.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && len(out[j].match) > len(out[j-1].match); j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
-	return out
-}
-
-// matchNeedleAt returns the length of the longest needle matching s at position i,
-// or 0. `lowerS` is the case-folded view of s (identical to s when folding is off)
-// and is used for needles whose `folded` flag is set.
-func matchNeedleAt(s, lowerS string, i int, needles []needle) int {
+// matchNeedleAt returns the length in RUNES of the longest needle matching fs at
+// position i, or 0. `fs` is the case-folded rune view of the input; because it has
+// the same length as the original rune slice, every index here is valid and no
+// bounds check can disagree with the slice it indexes.
+func matchNeedleAt(fs []rune, i int, needles []needle) int {
 	for _, nd := range needles {
 		n := len(nd.match)
-		if i+n > len(s) {
+		if n == 0 || i+n > len(fs) {
 			continue
 		}
-		if nd.folded {
-			if lowerS[i:i+n] == nd.match {
-				return n
-			}
-			continue
-		}
-		if s[i:i+n] == nd.match {
+		if string(fs[i:i+n]) == string(nd.match) {
 			return n
 		}
 	}
 	return 0
 }
 
-// isASCII reports whether every byte is 7-bit.
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
-// longestTokenFragmentAt returns the length of the longest substring of s
-// starting at i that also occurs inside token and is at least `threshold` long,
-// or 0 if there is none.
+// longestTokenFragmentAt returns the length in runes of the longest substring of
+// fs starting at i that also occurs inside the folded token and is at least
+// `threshold` runes long, or 0 if there is none.
 //
-// Longest-first is what makes the replacement maximal rather than fragmented.
-// The full token is excluded from consideration because an exact occurrence was
-// already replaced by an earlier pass, and re-matching it here would be redundant.
-func longestTokenFragmentAt(s string, i int, token string, threshold int) int {
-	avail := len(s) - i
-	maxLen := len(token) - 1
+// Longest-first is what makes the replacement maximal rather than fragmented. The
+// full token is excluded because an exact occurrence was already handled by
+// matchNeedleAt, so re-matching it here would be redundant.
+func longestTokenFragmentAt(fs []rune, i int, tokenFolded []rune, threshold int) int {
+	avail := len(fs) - i
+	maxLen := len(tokenFolded) - 1
 	if maxLen > avail {
 		maxLen = avail
 	}
 	for l := maxLen; l >= threshold; l-- {
-		if strings.Contains(token, s[i:i+l]) {
+		if strings.Contains(string(tokenFolded), string(fs[i:i+l])) {
 			return l
 		}
 	}
 	return 0
+}
+
+// credentialNeedles returns every spelling of `token` worth matching, longest
+// first so that a maximal match wins at any given position. All needles are
+// case-folded to runes, matching the folded view of the input, so one comparison
+// path covers both the exact and the case-folded forms.
+//
+// QueryEscape and PathEscape disagree about which characters they encode (notably
+// '/' and ' '), and a credential can be reflected through either context — a query
+// value or a path segment — so both spellings are covered. Percent escapes are
+// matched case-insensitively because encoders disagree on hex digit case ("%2f" vs
+// "%2F") and an attacker choosing the spelling costs them nothing.
+//
+// needles[0] is always the folded token itself, which is what the fragment scan
+// uses as its haystack.
+func credentialNeedles(token string) []needle {
+	foldRunes := func(s string) []rune {
+		out := make([]rune, 0, len(s))
+		for _, r := range s {
+			out = append(out, unicode.ToLower(r))
+		}
+		return out
+	}
+	seen := map[string]bool{token: true}
+	out := []needle{{match: foldRunes(token)}}
+	for _, enc := range []string{url.QueryEscape(token), url.PathEscape(token)} {
+		if enc == token || seen[enc] {
+			continue
+		}
+		seen[enc] = true
+		out = append(out, needle{match: foldRunes(enc)})
+	}
+	// Longest first. Equal lengths keep insertion order, which puts the plain
+	// spelling ahead of the escaped ones, so an exact match wins over a
+	// percent-encoded one of the same length.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && len(out[j].match) > len(out[j-1].match); j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
 }

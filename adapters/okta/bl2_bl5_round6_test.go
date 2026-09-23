@@ -442,9 +442,28 @@ func TestBL3_TokenAsURLSchemeIsRedacted(t *testing.T) {
 // that is invalid JSON for []LogEvent *and* contains the reflected credential, so
 // the json decoder's own message quotes server-controlled text.
 func TestBL2_DecodeErrorQuotingTheTokenIsRedacted(t *testing.T) {
-	// A string where the decoder expects an array element forces a decode error
-	// whose message embeds the offending JSON text.
-	body := `"` + canaryOktaToken + `"`
+	// THE MECHANISM IS A TIME-PARSE ERROR, NOT A STRUCTURAL ONE — and getting this
+	// wrong produced a vacuous test.
+	//
+	// A body like `"<TOKEN>"` (a string where an array is expected) yields
+	// `json: cannot unmarshal string into Go value of type []main.LogEvent`, which
+	// quotes at most ONE character of input — never the token. The first version of
+	// this test used exactly that body, so it asserted "no canary" against a message
+	// that could never have contained one. It passed with the redaction removed,
+	// which is why mutation M11 (decode wrap unredacted) SURVIVED.
+	//
+	// The real leak is LogEvent.Published being a time.Time. Sending the token as
+	// that field's value makes encoding/json delegate to time.Parse, whose error
+	// quotes the VALUE VERBATIM, twice:
+	//
+	//   parsing time "<TOKEN>" as "2006-01-02T15:04:05Z07:00": cannot parse
+	//   "<TOKEN>" as "2006"
+	//
+	// That is the reviewer's reproduction, and it is transient + retried, so it is
+	// logged ~5x per poll cycle. This test pins it. A positive control below proves
+	// the body actually produces a token-bearing error, so the test can never go
+	// silently vacuous again.
+	body := `[{"published":"` + canaryOktaToken + `"}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -463,6 +482,25 @@ func TestBL2_DecodeErrorQuotingTheTokenIsRedacted(t *testing.T) {
 	if !strings.Contains(msg, "decode page") {
 		t.Errorf("expected the decode-page context in the error, got: %q", msg)
 	}
+
+	// POSITIVE CONTROL — the assertion that keeps this test honest. Decode the same
+	// body the way the client does and confirm the RAW error text really does carry
+	// the token. Without this, the test would pass vacuously against any body whose
+	// error message merely never mentioned the credential (which is exactly what the
+	// first version did). If Okta/Go ever stops quoting the value here, this fails
+	// loudly and the test gets rewritten against a live mechanism instead of rotting
+	// into a no-op.
+	var ctl []LogEvent
+	rawErr := json.NewDecoder(strings.NewReader(body)).Decode(&ctl)
+	if rawErr == nil {
+		t.Fatalf("expected the control decode to fail for %q", body)
+	}
+	if !strings.Contains(rawErr.Error(), canaryOktaToken) {
+		t.Fatalf("the decode error no longer quotes the token verbatim, so this test "+
+			"cannot pin BL-2 as written. Raw error was: %q — find a body whose error "+
+			"text carries server-controlled content and rewrite the fixture.", rawErr.Error())
+	}
+	t.Logf("positive control: raw decode error DOES carry the token: %.160s", rawErr.Error())
 	assertNoCanary(t, msg, "BL-2 decode error")
 	for n := len(canaryOktaToken) - 1; n >= fragmentThreshold(canaryOktaToken); n-- {
 		if strings.Contains(msg, canaryOktaToken[:n]) {
