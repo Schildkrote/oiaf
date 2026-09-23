@@ -30,8 +30,11 @@ Microsoft Entra ID Protection and others), but it is pre-release: the PAM
 enforcement path is real and packaged, TOTP/push MFA are functional, WebAuthn
 ceremonies are implemented and tested (29 test functions across the MFA and API
 layers — against a **software** authenticator, not a hardware key), and the
-cloud-IdP adapters are design-stage skeletons. Storage is still in-memory only,
-so nothing survives a restart. For an honest, capability-by-capability comparison
+Okta adapter is implemented and offline-tested, while the remaining cloud-IdP
+adapters (Entra ID, Duo, generic webhook) are design-stage skeletons. Storage is
+still in-memory only, so nothing survives a restart — including the audit hash
+chain, which is the limitation that gates DC monitoring and the identity graph.
+For an honest, capability-by-capability comparison
 against the commercial market — including what each maturity level does and does
 not replace for you — see
 **[OIAF vs commercial identity security](https://schildkrote.github.io/oiaf/comparison/)**
@@ -87,8 +90,10 @@ make dev
 - WebAuthn/passkey ceremonies (registration + assertion), tested against a software
   authenticator; hardware-key validation is still an open gate
 - Audit logging with hash chain
-- Adapter SDK with reference skeletons (**RADIUS/LDAP/Okta/Entra/Duo/webhook stubs exit 1**)
-- **Storage today: MemoryStore only.** `OIAF_DATABASE_URL` / compose Postgres+Redis are **not** wired into a Postgres backend yet
+- Adapter SDK with reference skeletons (**RADIUS/LDAP/Entra/Duo/webhook stubs exit 1**)
+- Okta adapter — System Log ingestion and credential redaction, 91 test functions.
+  Tested offline against recorded fixtures; **never against a live Okta tenant**
+- **Storage today: MemoryStore only.** `OIAF_DATABASE_URL` / compose Postgres+Redis are **not** wired into a Postgres backend yet. Note that `config.example.yaml` advertises a `storage.driver` setting which `main.go` does not currently read — the knob is inert until a durable driver lands (roadmap next step 1)
 
 ## DC-Side Monitoring Scope
 
