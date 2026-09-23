@@ -1,0 +1,105 @@
+{
+  "events": [
+    {
+      "uuid": "sample-1",
+      "published": "2026-09-01T08:00:00.000Z",
+      "eventType": "user.session.start",
+      "displayMessage": "User sign-in",
+      "outcome": { "result": "SUCCESS" },
+      "actor": {
+        "id": "00u1abc",
+        "type": "User",
+        "alternateId": "alice@corp.example",
+        "displayName": "Alice Example"
+      },
+      "client": {
+        "ipAddress": "203.0.113.10",
+        "userAgent": {
+          "rawUserAgent": "Mozilla/5.0 (Macintosh) Chrome/128",
+          "browser": "CHROME",
+          "os": "Mac OS X"
+        },
+        "device": "Computer",
+        "geographicalContext": {
+          "city": "Berlin",
+          "country": "DE",
+          "geolocation": { "lat": 52.52, "lon": 13.405 }
+        }
+      },
+      "authenticationContext": { "credentialType": "otp" }
+    },
+    {
+      "uuid": "sample-2",
+      "published": "2026-09-01T08:20:00.000Z",
+      "eventType": "user.session.start",
+      "displayMessage": "User sign-in from impossible location",
+      "outcome": { "result": "SUCCESS" },
+      "actor": {
+        "id": "00u1abc",
+        "type": "User",
+        "alternateId": "alice@corp.example",
+        "displayName": "Alice Example"
+      },
+      "client": {
+        "ipAddress": "198.51.100.44",
+        "userAgent": {
+          "rawUserAgent": "Mozilla/5.0 (Windows NT 10.0) Firefox/129",
+          "browser": "FIREFOX",
+          "os": "Windows 10"
+        },
+        "device": "Computer",
+        "geographicalContext": {
+          "city": "Lagos",
+          "country": "NG",
+          "geolocation": { "lat": 6.5244, "lon": 3.3792 }
+        }
+      },
+      "authenticationContext": { "credentialType": "otp" }
+    },
+    {
+      "uuid": "sample-3",
+      "published": "2026-09-01T08:25:00.000Z",
+      "eventType": "user.mfa.okta_verify.deny",
+      "displayMessage": "User denied Okta Verify push",
+      "outcome": { "result": "FAILURE", "reason": "User rejected" },
+      "actor": {
+        "id": "00u1abc",
+        "type": "User",
+        "alternateId": "alice@corp.example"
+      },
+      "client": { "ipAddress": "198.51.100.44" }
+    },
+    {
+      "uuid": "sample-4",
+      "published": "2026-09-01T09:00:00.000Z",
+      "eventType": "user.authentication.authenticate",
+      "displayMessage": "Legacy IMAP client sign-in with password",
+      "outcome": { "result": "SUCCESS" },
+      "actor": {
+        "id": "00u2def",
+        "type": "User",
+        "alternateId": "bob@corp.example"
+      },
+      "client": { "ipAddress": "203.0.113.77" },
+      "authenticationContext": { "credentialType": "password" },
+      "debugContext": { "debugData": { "requestUri": "/imap/mailbox" } }
+    },
+    {
+      "uuid": "sample-5",
+      "published": "2026-09-01T09:30:00.000Z",
+      "eventType": "group.user_membership.add",
+      "displayMessage": "Admin added user to group",
+      "outcome": { "result": "SUCCESS" },
+      "actor": {
+        "id": "00u3adm",
+        "type": "User",
+        "alternateId": "admin@corp.example"
+      },
+      "client": { "ipAddress": "203.0.113.5" },
+      "target": [
+        { "id": "00u2def", "type": "User", "alternateId": "bob@corp.example" },
+        { "id": "00g1grp", "type": "UserGroup", "alternateId": "Platform Admins" }
+      ]
+    }
+  ]
+}
