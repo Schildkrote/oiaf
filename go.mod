@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/go-ldap/ldap/v3 v3.4.14
+	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.57.0
